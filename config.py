@@ -1,0 +1,86 @@
+# config.py
+from settings import DB_CONFIG, OPENAI_API_KEY
+
+# Модели OpenAI
+MODELS = {
+    'embedding': {
+        'name': "text-embedding-3-large",  # или "text-embedding-ada-002"
+        'dimensions': 3072,  # 1536 для ada-002
+        'max_tokens': 8191,  # Максимальное количество токенов для эмбеддинга
+    },
+    'generation': {
+        'name': "gpt-4-turbo-preview",  # или "gpt-4"
+        'max_tokens': 4096,  # Максимальное количество токенов для ответа
+    }
+}
+
+# Режим отладки
+DEBUG = {
+    'enabled': False,  # Глобальное включение/отключение режима отладки
+    'interactive': True,  # Включить интерактивный режим с запросами пользователю
+    'show_embeddings': True,  # Показывать эмбеддинги
+    'show_similarity': True,  # Показывать значения сходства
+    'show_context': True,  # Показывать собранный контекст
+    'show_prompt': True,  # Показывать финальный промпт
+    'truncate_output': 200,  # Ограничение длины выводимого текста
+}
+
+# Корневые узлы для поиска
+ROOT_MARKERS = [
+    'Knowledge Universe TIP',
+    'База знаний',
+]
+
+# Настройки RAG
+RAG_SETTINGS = {
+    'temperature': 0.3,  # Креативность ответов (0.0 - строго, 1.0 - креативно)
+    'max_tokens': 2048,  # Максимальная длина ответа
+    'similarity_threshold': 0.85,  # Минимальный порог сходства для релевантных документов
+    'context_window': 3,  # Количество родительских/дочерних элементов для контекста
+    'chunk_size': 1000,  # Размер чанка для разбиения длинных текстов
+    'chunk_overlap': 100,  # Перекрытие между чанками
+}
+
+# Настройки поиска
+SEARCH_SETTINGS = {
+    'max_depth': 3,  # Максимальная глубина поиска дочерних элементов
+    'sample_size': 20,  # Размер выборки по умолчанию
+    'top_k': 5,  # Количество возвращаемых релевантных элементов
+    'min_text_length': 10,  # Минимальная длина текста для включения в поиск
+    'exclude_empty': True,  # Исключать пустые или слишком короткие тексты
+}
+
+# Настройки для интерактивного режима
+INTERACTIVE_SETTINGS = {
+    'stages': {
+        'embeddings': {
+            'params': ['model'],
+            'description': 'Генерация эмбеддингов',
+            'model_key': 'embedding',  # Ссылка на конфигурацию модели
+        },
+        'retrieval': {
+            'params': ['similarity_threshold', 'max_depth', 'top_k'],
+            'description': 'Поиск релевантных документов',
+        },
+        'context': {
+            'params': ['context_window', 'chunk_size', 'chunk_overlap'],
+            'description': 'Агрегация контекста',
+        },
+        'generation': {
+            'params': ['temperature', 'max_tokens', 'model'],
+            'description': 'Генерация ответа',
+            'model_key': 'generation',  # Ссылка на конфигурацию модели
+        }
+    },
+    'param_descriptions': {
+        'model': 'Модель для генерации',
+        'similarity_threshold': 'Порог сходства (0.0 - 1.0)',
+        'max_depth': 'Максимальная глубина поиска',
+        'top_k': 'Количество возвращаемых документов',
+        'context_window': 'Размер окна контекста',
+        'chunk_size': 'Размер чанка текста',
+        'chunk_overlap': 'Перекрытие между чанками',
+        'temperature': 'Температура генерации (0.0 - 1.0)',
+        'max_tokens': 'Максимальное количество токенов'
+    }
+}

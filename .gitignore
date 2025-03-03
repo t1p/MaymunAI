@@ -38,4 +38,5 @@ ENV/
 
 # Local development
 .DS_Store
-config.py
+settings.py
+settings-infosoft.py
