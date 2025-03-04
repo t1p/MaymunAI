@@ -718,14 +718,9 @@ def ensure_text_search_index():
         logger.error(f"Ошибка при создании индекса: {str(e)}")
         return False
 
-def search_by_keywords(keywords: List[str], limit: int = 20, root_id: str = None) -> List[Dict[str, Any]]:
+def search_by_keywords(keywords: List[str], limit: int = 20, root_id: str = None, max_depth: int = 3) -> List[Dict[str, Any]]:
     """
-    Ищет элементы в базе данных по ключевым словам
-    
-    Args:
-        keywords: Список ключевых слов или фраз для поиска
-        limit: Максимальное количество результатов
-        root_id: ID корневого элемента для ограничения поиска
+    Поиск элементов по ключевым словам с учетом максимальной глубины
     """
     try:
         if not keywords:
@@ -755,6 +750,14 @@ def search_by_keywords(keywords: List[str], limit: int = 20, root_id: str = None
                 
                 # Ограничиваем количество результатов
                 query += f" LIMIT {limit}"
+                
+                # Добавляем параметр max_depth в запрос
+                query_params = {
+                    'keywords': keywords,
+                    'limit': limit,
+                    'root_id': root_id,
+                    'max_depth': max_depth  # Используем переданное значение max_depth
+                }
                 
                 cur.execute(query, params)
                 rows = cur.fetchall()

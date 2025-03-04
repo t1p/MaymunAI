@@ -73,15 +73,35 @@ def process_query_with_keywords(query: str, keywords: List[str], top_k: int = No
     # Получаем выборку элементов на основе ключевых слов
     logger.debug(f"Поиск элементов по ключевым словам: {keywords}")
     ensure_text_search_index()  # Создаем индекс, если его нет
-    items = search_by_keywords(keywords, SEARCH_SETTINGS['sample_size'], root_id)
+    items = search_by_keywords(keywords, SEARCH_SETTINGS['sample_size'], root_id, max_depth=0)  # Явно передаем max_depth=0
     logger.debug(f"Найдено {len(items)} элементов по ключевым словам")
+    
+    # Создаем словарь для быстрого поиска ID по тексту
+    text_to_id_map = {}
+    for item in items:
+        item_id = item['item'][0] if 'item' in item and len(item['item']) > 0 else 'Нет ID'
+        text = item['item'][2] if 'item' in item and len(item['item']) > 2 else ''
+        # Сохраняем соответствие между текстом и ID
+        text_to_id_map[text] = item_id
+    
+    # Вывод информации о найденных документах до генерации эмбеддингов
+    if DEBUG['enabled']:
+        print("\nНайденные документы по ключевым словам:")
+        for i, item in enumerate(items, 1):
+            print(f"\n--- Документ {i} ---")
+            item_id = item['item'][0] if 'item' in item and len(item['item']) > 0 else 'Нет ID'
+            text = item['item'][2] if 'item' in item and len(item['item']) > 2 else ''
+            if len(text) > DEBUG['truncate_output']:
+                text = text[:DEBUG['truncate_output']] + "..."
+            print(f"ID: {item_id}")
+            print(f"Текст: {text}")
     
     # Если по ключевым словам ничего не найдено, используем стандартную выборку
     if not items:
         logger.debug(f"По ключевым словам ничего не найдено, используем стандартную выборку")
         items = get_items_sample(1, SEARCH_SETTINGS['sample_size'], root_id=root_id)
     
-    # Ищем релевантные элементы
+    # Ищем релевантные элементы (передаем оригинальные элементы)
     logger.debug(f"Ищем {top_k} релевантных элементов")
     relevant_items = search_similar_items(query, items, top_k)
     logger.debug(f"Найдено {len(relevant_items)} релевантных элементов")
@@ -91,11 +111,21 @@ def process_query_with_keywords(query: str, keywords: List[str], top_k: int = No
         print("\nНайденные релевантные элементы:")
         for i, item in enumerate(relevant_items, 1):
             print(f"\n--- Элемент {i} (сходство: {item['similarity']:.4f}) ---")
-            print(item['text'][:200] + "..." if len(item['text']) > 200 else item['text'])
+            
+            # Получаем ID из словаря текстов
+            text = item.get('text', '')
+            
+            # Ищем ID по тексту
+            item_id = text_to_id_map.get(text, 'Нет ID')
+            
+            print(f"ID: {item_id}")
+            
+            if len(text) > DEBUG['truncate_output']:
+                text = text[:DEBUG['truncate_output']] + "..."
+            print(text)
             
             # Добавляем расширенную информацию в расширенном режиме отладки
             if DEBUG.get('extended', False):
-                print(f"ID элемента: {item.get('id', 'Нет ID')}")
                 print(f"Путь: {item.get('path', 'Нет информации о пути')}")
                 if 'metadata' in item:
                     print("Метаданные:", item['metadata'])
@@ -224,7 +254,8 @@ def main():
             return
     
     print("\nMaymunAI - Ваш персональный ассистент")
-    print("Для выхода введите 'exit', 'quit' или 'выход'\n")
+    print("Для выхода введите 'exit', 'quit' или 'выход'")
+    print("Для перезапуска диалога введите 'начало'\n")
     
     if root_markers:
         print(f"Используются корневые маркеры: {', '.join(root_markers)}")
@@ -290,63 +321,82 @@ def main():
             logger.error(f"Ошибка при очистке эмбеддингов: {str(e)}")
     
     # Инициализируем переменную для хранения последнего запроса
-    last_query = "Как меня зовут?"
-    
-    while True:
-        # Используем последний запрос вместо статического текста
-        query = input(f"\nВведите ваш вопрос [{last_query}]: ").strip()
+    last_query = "Что такое бытие?"
+    # Внешний цикл для обработки команды "начало"
+    restart_dialog = True
+
+    while restart_dialog:
+        # Перезапуск диалога, не сбрасываем флаг здесь
+        # ... existing code ...
         
-        if not query:
-            query = last_query
-        else:
-            # Запоминаем новый запрос, только если он не пустой
-            last_query = query
+        # Устанавливаем начальное значение запроса при каждом перезапуске
+        last_query = "Что такое бытие?"
+        
+        while True:
+            # Используем последний запрос вместо статического текста
+            query = input(f"\nВведите ваш вопрос [{last_query}]: ").strip()
             
-        if query.lower() in ['exit', 'quit', 'выход']:
-            break
-        
-        # Запрос ключевых слов    
-        keywords = input("Введите ключевые слова или фразы через запятую для поиска контекста: ").strip()
-        
-        try:
-            logger.debug(f"Обработка запроса: {query}")
-            logger.debug(f"Ключевые слова: {keywords}")
-            
-            if keywords:
-                keywords_list = [k.strip() for k in keywords.split(',') if k.strip()]
-                answer = process_query_with_keywords(
-                    query, 
-                    keywords_list, 
-                    root_id=args.block_id,
-                    parent_context=args.parent_context,
-                    child_context=args.child_context
-                )
+            if not query:
+                query = last_query
             else:
-                # Если ключевые слова не указаны, используем модель для их генерации
-                keywords_list = generate_keywords_for_query(query)
-                logger.info(f"Автоматически подобранные ключевые слова: {', '.join(keywords_list)}")
-                print(f"\nАвтоматически подобранные ключевые слова: {', '.join(keywords_list)}")
-
-                # Даем возможность пользователю отредактировать ключевые слова
-                edit_keywords = input("Хотите отредактировать ключевые слова? (да/нет): ").strip().lower()
-                if edit_keywords in ['да', 'д', 'yes', 'y']:
-                    edited_keywords = input(f"Введите новые ключевые слова через запятую [{', '.join(keywords_list)}]: ").strip()
-                    if edited_keywords:
-                        keywords_list = [k.strip() for k in edited_keywords.split(',') if k.strip()]
-
-                print(f"Используем ключевые слова: {', '.join(keywords_list)}")
-                answer = process_query_with_keywords(
-                    query, 
-                    keywords_list, 
-                    root_id=args.block_id,
-                    parent_context=args.parent_context,
-                    child_context=args.child_context
-                )
+                # Запоминаем новый запрос, только если он не пустой
+                last_query = query
                 
-            print("\nОтвет:", answer)
-        except Exception as e:
-            logger.error(f"Ошибка при обработке запроса: {str(e)}", exc_info=args.debug or args.debug_extended)
-            print(f"\nПроизошла ошибка: {str(e)}")
+            if query.lower() in ['exit', 'quit', 'выход']:
+                # Не нужно сбрасывать флаг restart_dialog, так как return завершит функцию
+                print("\nЗавершение работы...")
+                return  # Полностью выходим из функции main
+            
+            if query.lower() == 'начало':
+                print("\nПерезапуск диалога...\n")
+                print("MaymunAI - Ваш персональный ассистент")
+                print("Для выхода введите 'exit', 'quit' или 'выход'")
+                print("Для перезапуска диалога введите 'начало'\n")
+                restart_dialog = True
+                break
+            
+            # Запрос ключевых слов    
+            keywords = input("Введите ключевые слова или фразы через запятую для поиска контекста: ").strip()
+            
+            try:
+                logger.debug(f"Обработка запроса: {query}")
+                logger.debug(f"Ключевые слова: {keywords}")
+                
+                if keywords:
+                    keywords_list = [k.strip() for k in keywords.split(',') if k.strip()]
+                    answer = process_query_with_keywords(
+                        query, 
+                        keywords_list, 
+                        root_id=args.block_id,
+                        parent_context=args.parent_context,
+                        child_context=args.child_context
+                    )
+                else:
+                    # Если ключевые слова не указаны, используем модель для их генерации
+                    keywords_list = generate_keywords_for_query(query)
+                    logger.info(f"Автоматически подобранные ключевые слова: {', '.join(keywords_list)}")
+                    print(f"\nАвтоматически подобранные ключевые слова: {', '.join(keywords_list)}")
+
+                    # Даем возможность пользователю отредактировать ключевые слова
+                    edit_keywords = input("Хотите отредактировать ключевые слова? (да/нет): ").strip().lower()
+                    if edit_keywords in ['да', 'д', 'yes', 'y']:
+                        edited_keywords = input(f"Введите новые ключевые слова через запятую [{', '.join(keywords_list)}]: ").strip()
+                        if edited_keywords:
+                            keywords_list = [k.strip() for k in edited_keywords.split(',') if k.strip()]
+
+                    print(f"Используем ключевые слова: {', '.join(keywords_list)}")
+                    answer = process_query_with_keywords(
+                        query, 
+                        keywords_list, 
+                        root_id=args.block_id,
+                        parent_context=args.parent_context,
+                        child_context=args.child_context
+                    )
+                    
+                print("\nОтвет:", answer)
+            except Exception as e:
+                logger.error(f"Ошибка при обработке запроса: {str(e)}", exc_info=args.debug or args.debug_extended)
+                print(f"\nПроизошла ошибка: {str(e)}")
 
     # Выводим отладочную информацию о БД только в расширенном режиме отладки
     if args.debug_extended:

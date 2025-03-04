@@ -266,117 +266,58 @@ def count_tokens(text: str, model: str = None) -> int:
         return len(encoding.encode(text))
 
 @timeit
-def create_embedding_for_item(item: Dict) -> Dict:
+def create_embedding_for_item(item):
     """
-    Создает эмбеддинг для элемента
+    Создает эмбеддинг для элемента с учетом его структуры и родительских/дочерних элементов
     """
     try:
-        # Собираем текст из:
-        texts = []
-        
-        # 1. Родительских элементов
-        if item.get('parents'):
-            for parent in item['parents']:
-                if parent and parent[2]:  # parent[2] - это текст
-                    # Удаляем "admin" из начала текста, если он там есть
-                    parent_text = parent[2]
-                    if parent_text.startswith("admin "):
-                        parent_text = parent_text[6:]  # Удаляем первые 6 символов "admin "
-                    texts.append(parent_text)
-        
-        # 2. Самого элемента
-        if item['item'] and item['item'][2]:
-            # Удаляем "admin" из начала текста
-            item_text = item['item'][2]
-            if item_text.startswith("admin "):
-                item_text = item_text[6:]  # Удаляем первые 6 символов "admin "
-            texts.append(item_text)
-        
-        # 3. Дочерних элементов
-        if item.get('children'):
-            for child in item['children']:
-                if child and child[2]:
-                    # Удаляем "admin" из начала текста
-                    child_text = child[2]
-                    if child_text.startswith("admin "):
-                        child_text = child_text[6:]  # Удаляем первые 6 символов "admin "
-                    texts.append(child_text)
-        
-        # Объединяем все тексты в один
-        combined_text = " ".join(texts)
-        
-        # Ограничиваем по токенам вместо слов
-        # Используем более безопасный лимит в 7000 токенов (меньше максимума в 8192)
-        max_tokens = 7000
-        token_count = count_tokens(combined_text)
-        
-        if token_count > max_tokens:
-            logger.warning(f"Текст слишком длинный ({token_count} токенов), обрезаем до {max_tokens} токенов")
+        if 'item' in item:
+            item_id, parent_id, item_text = item['item']
             
-            # Обрезаем текст по токенам
-            encoding = tiktoken.encoding_for_model(MODELS['embedding']['name'])
-            tokens = encoding.encode(combined_text)
-            truncated_tokens = tokens[:max_tokens]
-            combined_text = encoding.decode(truncated_tokens)
+            # Создаем основной текст
+            text = item_text.strip() if item_text else ""
             
-            # Проверяем новое количество токенов после обрезки
-            new_token_count = count_tokens(combined_text)
-            logger.debug(f"После обрезки: {new_token_count} токенов")
-        
-        # Получаем ID элемента
-        item_id = item['item'][0]
-        model = MODELS['embedding']['name']
-        
-        # Проверяем, есть ли уже эмбеддинг в базе
-        cached_embedding = get_embedding_from_db(item_id, model)
-        
-        # Если эмбеддинг найден и текст не изменился
-        if cached_embedding and get_text_hash(combined_text) == cached_embedding['text_hash']:
-            logger.debug(f"Используем кэшированный эмбеддинг для элемента {item_id}")
-            embedding = cached_embedding['embedding']
-        else:
-            # Получаем новый эмбеддинг и сохраняем его
-            embedding = get_embedding(combined_text)
-            save_embedding_to_db(item_id, embedding, combined_text, model)
-        
-        return {
-            'text': combined_text,
-            'embedding': embedding,
-            'dimensions': len(embedding)
-        }
-    except Exception as e:
-        logger.error(f"Ошибка при создании эмбеддинга для элемента: {str(e)}")
-        
-        # Более безопасное возвращение значения в случае ошибки
-        # Создаем эмбеддинг только для самого элемента, без контекста
-        try:
-            simplified_text = ""
-            if item['item'] and item['item'][2]:
-                simplified_text = item['item'][2]
-                if simplified_text.startswith("admin "):
-                    simplified_text = simplified_text[6:]
-                    
-                # Ограничиваем длину
-                if count_tokens(simplified_text) > 7000:
-                    encoding = tiktoken.encoding_for_model(MODELS['embedding']['name'])
-                    tokens = encoding.encode(simplified_text)
-                    simplified_text = encoding.decode(tokens[:7000])
-                    
-                # Создаем эмбеддинг только для этого текста
-                embedding = get_embedding(simplified_text)
-                return {
-                    'text': simplified_text,
-                    'embedding': embedding,
-                    'dimensions': len(embedding)
-                }
-        except Exception as inner_e:
-            logger.error(f"Ошибка при создании запасного эмбеддинга: {str(inner_e)}")
-            # В крайнем случае, возвращаем пустой эмбеддинг нужной размерности
-            dimensions = MODELS['embedding']['dimensions']
+            # ВРЕМЕННО ЗАКОММЕНТИРОВАНО: Объединение с родительскими элементами
+            # if 'parents' in item and item['parents']:
+            #     for parent in item['parents']:
+            #         parent_text = parent[2].strip() if parent[2] else ""
+            #         if parent_text:
+            #             text = f"{parent_text}\n\n{text}"
+            
+            # ВРЕМЕННО ЗАКОММЕНТИРОВАНО: Объединение с дочерними элементами
+            # if 'children' in item and item['children']:
+            #     for child in item['children']:
+            #         child_text = child[2].strip() if child[2] else ""
+            #         if child_text:
+            #             text = f"{text}\n\n{child_text}"
+            
+            # Возвращаем эмбеддинг и исходный текст
+            embedding = get_embedding(text)
             return {
-                'text': 'Ошибка при обработке текста',
-                'embedding': [0.0] * dimensions,
-                'dimensions': dimensions
+                'embedding': embedding,
+                'text': text,
+                'item_id': item_id
+            }
+        else:
+            raise ValueError("Неверный формат элемента")
+    except Exception as e:
+        logging.getLogger('embeddings').error(f"Ошибка при создании эмбеддинга для элемента: {str(e)}")
+        
+        # Пытаемся создать запасной эмбеддинг
+        try:
+            text = str(item)
+            embedding = get_embedding(text)
+            return {
+                'embedding': embedding,
+                'text': text,
+                'item_id': 'unknown'
+            }
+        except Exception as e2:
+            logging.getLogger('embeddings').error(f"Ошибка при создании запасного эмбеддинга: {str(e2)}")
+            return {
+                'embedding': [],
+                'text': '',
+                'item_id': 'error'
             }
 
 @timeit
