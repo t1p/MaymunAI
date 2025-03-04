@@ -634,13 +634,150 @@ def get_table_structure():
                 if row:
                     print("\nПример значений:")
                     print(f"  id: {row[0]}")
-                    print(f"  id_parent: {row[1]}")
-                    print(f"  txt: {row[2][:50]}...")
-                    print(f"  area: {row[3]}")
-                    print(f"  style: {row[4]}")
+                    print(f"  id_parent: {row[1] if row[1] is not None else 'None'}")
+                    print(f"  txt: {row[2][:50] + '...' if row[2] else 'None'}")
+                    print(f"  area: {row[3] if row[3] is not None else 'None'}")
+                    print(f"  style: {row[4] if row[4] is not None else 'None'}")
     except Exception as e:
         logger.error(f"Ошибка при получении структуры таблицы: {str(e)}")
+        return False  # Возвращаем False вместо raise, чтобы не прерывать работу программы
+
+def create_embeddings_table():
+    """Создает таблицу для хранения эмбеддингов, если она не существует"""
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS embeddings (
+                        id SERIAL PRIMARY KEY,
+                        item_id UUID NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                        embedding VECTOR(3072),  -- Для text-embedding-3-large
+                        model VARCHAR(50) NOT NULL,
+                        text_hash VARCHAR(64) NOT NULL,  -- Хеш текста для проверки актуальности
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(item_id, model)
+                    );
+                    
+                    CREATE INDEX IF NOT EXISTS idx_embeddings_item_id ON embeddings(item_id);
+                    CREATE INDEX IF NOT EXISTS idx_embeddings_text_hash ON embeddings(text_hash);
+                """)
+                conn.commit()
+                return True
+    except Exception as e:
+        logger.error(f"Ошибка при создании таблицы эмбеддингов: {str(e)}")
+        return False
+
+def ensure_text_search_index():
+    """Создает индекс для текстового поиска в таблице items, если его нет"""
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Проверяем, существует ли индекс для поля txt
+                cur.execute("""
+                    SELECT indexname FROM pg_indexes 
+                    WHERE tablename = 'items' AND indexdef LIKE '%txt%'
+                """)
+                
+                existing_index = cur.fetchone()
+                
+                if not existing_index:
+                    logger.info("Создаем индекс для текстового поиска в таблице items")
+                    # Создаем индекс для текстового поиска
+                    cur.execute("""
+                        CREATE INDEX idx_items_txt ON items USING gin(to_tsvector('russian', txt));
+                    """)
+                    conn.commit()
+                    logger.info("Индекс для текстового поиска успешно создан")
+                else:
+                    logger.debug("Индекс для текстового поиска уже существует")
+                
+                return True
+    except Exception as e:
+        logger.error(f"Ошибка при создании индекса: {str(e)}")
+        return False
+
+def search_by_keywords(keywords: List[str], limit: int = 20, root_id: str = None) -> List[Dict[str, Any]]:
+    """
+    Ищет элементы в базе данных по ключевым словам
+    
+    Args:
+        keywords: Список ключевых слов или фраз для поиска
+        limit: Максимальное количество результатов
+        root_id: ID корневого элемента для ограничения поиска
+    """
+    try:
+        if not keywords:
+            return []
+            
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Формируем условия для поиска
+                like_conditions = []
+                params = []
+                
+                for keyword in keywords:
+                    like_conditions.append("txt ILIKE %s")
+                    params.append(f"%{keyword}%")
+                
+                # Базовый запрос
+                query = f"""
+                SELECT id, id_parent, txt 
+                FROM items 
+                WHERE ({' OR '.join(like_conditions)})
+                """
+                
+                # Добавляем условие для корневого элемента, если оно задано
+                if root_id:
+                    query += " AND (id = %s OR EXISTS (WITH RECURSIVE tree AS (SELECT id FROM items WHERE id = %s UNION ALL SELECT i.id FROM items i JOIN tree t ON i.id_parent = t.id) SELECT 1 FROM tree WHERE tree.id = items.id))"
+                    params.extend([root_id, root_id])
+                
+                # Ограничиваем количество результатов
+                query += f" LIMIT {limit}"
+                
+                cur.execute(query, params)
+                rows = cur.fetchall()
+                
+                # Получаем родительские и дочерние элементы для каждого элемента
+                items = []
+                for row in rows:
+                    item_data = {
+                        'item': row,
+                        'parents': get_parent_items(row[0], cur),
+                        'children': get_child_items(row[0], cur)
+                    }
+                    items.append(item_data)
+                
+                return items
+                
+    except Exception as e:
+        logger.error(f"Ошибка при поиске по ключевым словам: {str(e)}")
         raise
+
+def create_query_embeddings_table():
+    """Создает таблицу для хранения эмбеддингов запросов, если она не существует"""
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS query_embeddings (
+                        id SERIAL PRIMARY KEY,
+                        text TEXT NOT NULL,
+                        text_hash VARCHAR(64) NOT NULL,
+                        embedding VECTOR(3072),  -- Для text-embedding-3-large
+                        dimensions INTEGER NOT NULL,
+                        model VARCHAR(50) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(text_hash, model)
+                    );
+                    
+                    CREATE INDEX IF NOT EXISTS idx_query_embeddings_text_hash 
+                    ON query_embeddings(text_hash);
+                """)
+                conn.commit()
+                return True
+    except Exception as e:
+        logger.error(f"Ошибка при создании таблицы эмбеддингов запросов: {str(e)}")
+        return False
 
 if __name__ == '__main__':
     import logging

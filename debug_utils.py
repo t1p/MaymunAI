@@ -1,7 +1,8 @@
 import logging
 from typing import Any, Dict, Optional
-from config import DEBUG, INTERACTIVE_SETTINGS, RAG_SETTINGS, SEARCH_SETTINGS
+from config import DEBUG, INTERACTIVE_SETTINGS, RAG_SETTINGS, SEARCH_SETTINGS, MODELS
 import numpy as np
+import sys  # Добавляем импорт sys для выхода из программы
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +55,24 @@ def get_stage_params(stage: str) -> dict:
     """Получает текущие параметры для этапа"""
     stage_info = INTERACTIVE_SETTINGS['stages'].get(stage, {})
     params = stage_info.get('params', [])
+    result = {}
     
-    if stage in ['embeddings', 'generation']:
-        return {param: RAG_SETTINGS.get(param) for param in params}
-    elif stage == 'retrieval':
-        return {param: SEARCH_SETTINGS.get(param) for param in params}
-    elif stage == 'context':
-        return {param: RAG_SETTINGS.get(param) for param in params}
-    return {}
+    for param in params:
+        if param == 'model':
+            # Получаем модель из MODELS, а не из RAG_SETTINGS
+            model_key = stage_info.get('model_key')
+            if model_key and model_key in MODELS:
+                result[param] = MODELS[model_key]['name']
+            else:
+                result[param] = None
+        elif stage in ['embeddings', 'generation']:
+            result[param] = RAG_SETTINGS.get(param)
+        elif stage == 'retrieval':
+            result[param] = SEARCH_SETTINGS.get(param, None)
+        elif stage == 'context':
+            result[param] = RAG_SETTINGS.get(param)
+            
+    return result
 
 def print_params(params: Dict[str, Any]) -> None:
     """Выводит текущие параметры"""
@@ -100,11 +111,18 @@ def confirm_action(prompt: str = "Продолжить? (да/нет): ") -> boo
     """Запрашивает подтверждение действия"""
     while True:
         response = input(prompt).strip().lower()
+        # Если ввод пустой, возвращаем False (нет)
+        if not response:
+            return False
         if response in ['y', 'yes', 'д', 'да']:
             return True
         if response in ['n', 'no', 'н', 'нет']:
             return False
-        print("Пожалуйста, ответьте 'да' или 'нет'")
+        # Обработка команды выхода
+        if response in ['exit', 'quit', 'выход']:
+            print("Выход из программы...")
+            sys.exit(0)
+        print("Пожалуйста, ответьте 'да' или 'нет' (или 'выход' для завершения программы)")
 
 def debug_step(stage: str, data: Any = None) -> Optional[Dict[str, Any]]:
     """

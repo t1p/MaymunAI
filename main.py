@@ -1,7 +1,7 @@
 from typing import List, Dict, Any
 import argparse
 import logging
-from db import get_items_sample, view_item_tree, view_root_items, search_text, print_search_results, get_block_info_by_name, get_block_info_by_id, print_block_info
+from db import get_items_sample, view_item_tree, view_root_items, search_text, print_search_results, get_block_info_by_name, get_block_info_by_id, print_block_info, ensure_text_search_index, search_by_keywords
 from retrieval import search_similar_items
 from rag import generate_answer
 from config import DEBUG, SEARCH_SETTINGS, RAG_SETTINGS
@@ -51,6 +51,46 @@ def process_query(query: str, sample_size: int = None, top_k: int = None, root_i
     
     return answer
 
+def process_query_with_keywords(query: str, keywords: List[str], top_k: int = None, root_id: str = None) -> str:
+    """
+    Обрабатывает пользовательский запрос с использованием ключевых слов для поиска контекста
+    """
+    logger = logging.getLogger('process_query')
+    
+    # Используем значения из настроек, если не указаны явно
+    if top_k is None:
+        top_k = SEARCH_SETTINGS['top_k']
+    
+    # Получаем выборку элементов на основе ключевых слов
+    logger.debug(f"Поиск элементов по ключевым словам: {keywords}")
+    ensure_text_search_index()  # Создаем индекс, если его нет
+    items = search_by_keywords(keywords, SEARCH_SETTINGS['sample_size'], root_id)
+    logger.debug(f"Найдено {len(items)} элементов по ключевым словам")
+    
+    # Если по ключевым словам ничего не найдено, используем стандартную выборку
+    if not items:
+        logger.debug(f"По ключевым словам ничего не найдено, используем стандартную выборку")
+        items = get_items_sample(1, SEARCH_SETTINGS['sample_size'], root_id=root_id)
+    
+    # Ищем релевантные элементы
+    logger.debug(f"Ищем {top_k} релевантных элементов")
+    relevant_items = search_similar_items(query, items, top_k)
+    logger.debug(f"Найдено {len(relevant_items)} релевантных элементов")
+    
+    # В режиме отладки показываем найденные элементы
+    if DEBUG['enabled']:
+        print("\nНайденные релевантные элементы:")
+        for i, item in enumerate(relevant_items, 1):
+            print(f"\n--- Элемент {i} (сходство: {item['similarity']:.4f}) ---")
+            print(item['text'][:200] + "..." if len(item['text']) > 200 else item['text'])
+    
+    # Генерируем ответ
+    logger.debug("Генерируем ответ")
+    answer = generate_answer(query, relevant_items)
+    logger.debug("Ответ получен")
+    
+    return answer
+
 def main():
     parser = argparse.ArgumentParser(description='MaymunAI - Ваш персональный ассистент')
     parser.add_argument('-d', '--debug', action='store_true', help='Включить режим отладки')
@@ -67,6 +107,14 @@ def main():
     setup_logging(args.debug)
     DEBUG['enabled'] = args.debug
     logger = logging.getLogger('main')
+    
+    # Создаем таблицы, если их нет
+    try:
+        from db import create_embeddings_table, create_query_embeddings_table
+        create_embeddings_table()
+        create_query_embeddings_table()
+    except Exception as e:
+        logger.error(f"Ошибка при инициализации базы данных: {str(e)}")
     
     if args.debug:
         logger.info("Запуск в режиме отладки")
@@ -138,7 +186,7 @@ def main():
             return
     
     print("\nMaymunAI - Ваш персональный ассистент")
-    print("Для выхода введите 'exit' или 'quit'\n")
+    print("Для выхода введите 'exit', 'quit' или 'выход'\n")
     
     if root_markers:
         print(f"Используются корневые маркеры: {', '.join(root_markers)}")
@@ -153,12 +201,22 @@ def main():
         if not query:
             query = default_query
             
-        if query.lower() in ['exit', 'quit']:
+        if query.lower() in ['exit', 'quit', 'выход']:
             break
-            
+        
+        # Запрос ключевых слов    
+        keywords = input("Введите ключевые слова или фразы через запятую для поиска контекста: ").strip()
+        
         try:
             logger.debug(f"Обработка запроса: {query}")
-            answer = process_query(query, root_id=args.block_id)
+            logger.debug(f"Ключевые слова: {keywords}")
+            
+            if keywords:
+                keywords_list = [k.strip() for k in keywords.split(',') if k.strip()]
+                answer = process_query_with_keywords(query, keywords_list, root_id=args.block_id)
+            else:
+                answer = process_query(query, root_id=args.block_id)
+                
             print("\nОтвет:", answer)
         except Exception as e:
             logger.error(f"Ошибка при обработке запроса: {str(e)}", exc_info=args.debug)

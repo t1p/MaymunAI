@@ -1,5 +1,6 @@
 # config.py
 from settings import DB_CONFIG, OPENAI_API_KEY
+from typing import Optional, Dict, Any
 
 # Модели OpenAI
 MODELS = {
@@ -43,11 +44,10 @@ RAG_SETTINGS = {
 
 # Настройки поиска
 SEARCH_SETTINGS = {
-    'max_depth': 3,  # Максимальная глубина поиска дочерних элементов
-    'sample_size': 20,  # Размер выборки по умолчанию
-    'top_k': 5,  # Количество возвращаемых релевантных элементов
-    'min_text_length': 10,  # Минимальная длина текста для включения в поиск
-    'exclude_empty': True,  # Исключать пустые или слишком короткие тексты
+    'sample_size': 20,  # Размер выборки документов для поиска 
+    'top_k': 5,  # Количество возвращаемых документов
+    'max_depth': 3,  # Максимальная глубина поиска в иерархии
+    'similarity_threshold': 0.6,  # Порог сходства (документы с меньшим сходством игнорируются)
 }
 
 # Настройки для интерактивного режима
@@ -84,3 +84,9 @@ INTERACTIVE_SETTINGS = {
         'max_tokens': 'Максимальное количество токенов'
     }
 }
+
+def get_embedding_from_db(item_id: str, model: str) -> Optional[Dict[str, Any]]:
+    # После получения эмбеддинга из БД, добавить проверку размерности
+    if embedding and len(embedding) != MODELS['embedding']['dimensions']:
+        logger.warning(f"Кэшированный эмбеддинг имеет неправильную размерность: {len(embedding)} вместо {MODELS['embedding']['dimensions']}")
+        return None  # Возвращаем None, чтобы создать новый эмбеддинг
