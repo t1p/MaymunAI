@@ -5,9 +5,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Инициализируем клиент OpenAI с ключом из конфига
+# Создаем клиент с увеличенным таймаутом
 client = OpenAI(
-    api_key=OPENAI_API_KEY
+    api_key=OPENAI_API_KEY,
+    timeout=60.0  # Увеличиваем таймаут до 60 секунд
 )
 
 def list_models():

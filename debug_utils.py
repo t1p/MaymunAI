@@ -125,13 +125,7 @@ def confirm_action(prompt: str = "Продолжить? (да/нет): ") -> boo
         print("Пожалуйста, ответьте 'да' или 'нет' (или 'выход' для завершения программы)")
 
 def debug_step(stage: str, data: Any = None) -> Optional[Dict[str, Any]]:
-    """
-    Показывает отладочную информацию для этапа и предлагает изменить параметры
-    
-    Args:
-        stage: Название этапа
-        data: Данные для отображения
-    """
+    """Показывает отладочную информацию для этапа и предлагает изменить параметры"""
     if not DEBUG['enabled'] or not DEBUG['interactive']:
         return None
         
@@ -141,8 +135,12 @@ def debug_step(stage: str, data: Any = None) -> Optional[Dict[str, Any]]:
     if data is not None:
         if stage == 'embeddings':
             if isinstance(data, dict):
-                print(f"\nТекст: {data.get('text', '')}")
-                print(f"Модель: {data.get('model', '')}")
+                # Используем значения по умолчанию для отсутствующих полей
+                text = data.get('text', '(текст отсутствует)')
+                model = data.get('model', MODELS['embedding']['name'] if 'embedding' in MODELS else '(модель отсутствует)')
+                
+                print(f"\nТекст: {text}")
+                print(f"Модель: {model}")
                 if 'embedding' in data:
                     print(f"Эмбеддинг: {format_vector(data['embedding'])}")
             else:

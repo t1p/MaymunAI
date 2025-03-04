@@ -107,65 +107,84 @@ def get_root_items(root_markers: List[str] = None) -> List[Dict[str, Any]]:
     logger.debug(f"Найдено {len(result)} корневых элементов")
     return result
 
-def get_item_with_context(item_id: str) -> Dict[str, Any]:
+def get_item_with_context(item_id, parent_depth=0, child_depth=0):
     """
-    Получает запись из таблицы items вместе с контекстом (родительские и дочерние элементы)
+    Получает элемент с заданной глубиной контекста
+    
+    Args:
+        item_id: ID элемента
+        parent_depth: Глубина родительского контекста (0 - без родителей)
+        child_depth: Глубина дочернего контекста (0 - без детей)
     """
-    conn = psycopg2.connect(**DB_CONFIG)
-    cur = conn.cursor()
-    
-    # Получаем основную запись
-    cur.execute("""
-        SELECT id, id_parent, txt, area
-        FROM items 
-        WHERE id = %s
-    """, (item_id,))
-    item = cur.fetchone()
-    
-    if not item:
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Получаем основной элемент
+                cur.execute("""
+                    SELECT id, title, content, parent_id
+                    FROM items
+                    WHERE id = %s
+                """, (item_id,))
+                
+                item = cur.fetchone()
+                if not item:
+                    return None
+                
+                # Инициализируем результат
+                result = {
+                    'item': item,
+                    'parents': [],
+                    'children': []
+                }
+                
+                # Получаем родителей, если нужно
+                if parent_depth > 0:
+                    parent_ids = []
+                    current_parent_id = item[3]  # parent_id текущего элемента
+                    depth = 0
+                    
+                    while current_parent_id and depth < parent_depth:
+                        cur.execute("""
+                            SELECT id, title, content, parent_id
+                            FROM items
+                            WHERE id = %s
+                        """, (current_parent_id,))
+                        
+                        parent = cur.fetchone()
+                        if parent:
+                            parent_ids.append(parent[0])
+                            result['parents'].append(parent)
+                            current_parent_id = parent[3]
+                            depth += 1
+                        else:
+                            break
+                
+                # Получаем детей, если нужно
+                if child_depth > 0:
+                    cur.execute("""
+                        WITH RECURSIVE item_tree AS (
+                            SELECT id, title, content, parent_id, 1 as depth
+                            FROM items
+                            WHERE parent_id = %s
+                            
+                            UNION ALL
+                            
+                            SELECT i.id, i.title, i.content, i.parent_id, it.depth + 1
+                            FROM items i
+                            JOIN item_tree it ON i.parent_id = it.id
+                            WHERE it.depth < %s
+                        )
+                        SELECT id, title, content, parent_id
+                        FROM item_tree
+                        ORDER BY depth
+                    """, (item_id, child_depth))
+                    
+                    result['children'] = cur.fetchall()
+                
+                return result
+    except Exception as e:
+        logger.error(f"Ошибка при получении элемента с контекстом: {str(e)}")
         return None
-    
-    # Получаем родительские записи
-    cur.execute("""
-        WITH RECURSIVE parents AS (
-            SELECT id, id_parent, txt, area, 1 as level
-            FROM items
-            WHERE id = %s
-            UNION ALL
-            SELECT i.id, i.id_parent, i.txt, i.area, p.level + 1
-            FROM items i
-            INNER JOIN parents p ON p.id_parent = i.id
-        )
-        SELECT * FROM parents
-        ORDER BY level DESC;
-    """, (item_id,))
-    parents = cur.fetchall()
-    
-    # Получаем дочерние записи (теперь с большей глубиной)
-    cur.execute("""
-        WITH RECURSIVE children AS (
-            SELECT id, id_parent, txt, area, 1 as level
-            FROM items
-            WHERE id_parent = %s
-            UNION ALL
-            SELECT i.id, i.id_parent, i.txt, i.area, c.level + 1
-            FROM items i
-            INNER JOIN children c ON i.id_parent = c.id
-            WHERE c.level < 3  -- Ограничиваем глубину поиска
-        )
-        SELECT * FROM children
-        ORDER BY level, area;
-    """, (item_id,))
-    children = cur.fetchall()
-    
-    cur.close()
-    conn.close()
-    
-    return {
-        'item': item,
-        'parents': parents,
-        'children': children
-    }
 
 def get_connection():
     """Создает подключение к базе данных"""
@@ -650,16 +669,19 @@ def create_embeddings_table():
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS embeddings (
                         id SERIAL PRIMARY KEY,
-                        item_id UUID NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-                        embedding VECTOR(3072),  -- Для text-embedding-3-large
+                        item_id VARCHAR(255) NOT NULL,
+                        text TEXT NOT NULL,
+                        text_hash VARCHAR(64) NOT NULL,
+                        embedding VECTOR(3072),
+                        dimensions INTEGER NOT NULL,
                         model VARCHAR(50) NOT NULL,
-                        text_hash VARCHAR(64) NOT NULL,  -- Хеш текста для проверки актуальности
+                        model_version VARCHAR(20) NOT NULL,  -- Добавлено поле версии модели
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(item_id, model)
+                        UNIQUE(item_id, model, model_version)
                     );
                     
-                    CREATE INDEX IF NOT EXISTS idx_embeddings_item_id ON embeddings(item_id);
-                    CREATE INDEX IF NOT EXISTS idx_embeddings_text_hash ON embeddings(text_hash);
+                    CREATE INDEX IF NOT EXISTS idx_embeddings_item_id 
+                    ON embeddings(item_id);
                 """)
                 conn.commit()
                 return True
@@ -766,18 +788,92 @@ def create_query_embeddings_table():
                         embedding VECTOR(3072),  -- Для text-embedding-3-large
                         dimensions INTEGER NOT NULL,
                         model VARCHAR(50) NOT NULL,
+                        model_version VARCHAR(20) NOT NULL,  -- Добавлено поле версии модели
+                        frequency INTEGER DEFAULT 1,  -- Счетчик использования запроса
+                        last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- Время последнего использования
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(text_hash, model)
+                        UNIQUE(text_hash, model, model_version)
                     );
                     
                     CREATE INDEX IF NOT EXISTS idx_query_embeddings_text_hash 
                     ON query_embeddings(text_hash);
+                    
+                    CREATE INDEX IF NOT EXISTS idx_query_embeddings_frequency 
+                    ON query_embeddings(frequency DESC);
                 """)
                 conn.commit()
                 return True
     except Exception as e:
         logger.error(f"Ошибка при создании таблицы эмбеддингов запросов: {str(e)}")
         return False
+
+def clear_embeddings_table():
+    """Очищает таблицу эмбеддингов"""
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("TRUNCATE TABLE embeddings")
+                conn.commit()
+                logger.info("Таблица эмбеддингов очищена")
+                return True
+    except Exception as e:
+        logger.error(f"Ошибка при очистке таблицы эмбеддингов: {str(e)}")
+        return False
+
+def rebuild_tables():
+    """Удаляет и заново создает таблицы эмбеддингов"""
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    DROP TABLE IF EXISTS embeddings CASCADE;
+                    DROP TABLE IF EXISTS query_embeddings CASCADE;
+                """)
+                conn.commit()
+                logger.info("Таблицы эмбеддингов удалены")
+                
+                # Создаем таблицы заново
+                create_embeddings_table()
+                create_query_embeddings_table()
+                
+                return True
+    except Exception as e:
+        logger.error(f"Ошибка при перестроении таблиц: {str(e)}")
+        return False
+
+def clear_invalid_embeddings():
+    """Очищает эмбеддинги с неправильной размерностью"""
+    try:
+        from config import MODELS
+        expected_dimensions = MODELS['embedding']['dimensions']
+        
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Найти все эмбеддинги с неправильной размерностью
+                cur.execute("""
+                    SELECT item_id, dimensions 
+                    FROM embeddings 
+                    WHERE dimensions != %s
+                """, (expected_dimensions,))
+                
+                invalid_embeddings = cur.fetchall()
+                
+                if invalid_embeddings:
+                    print(f"Найдено {len(invalid_embeddings)} эмбеддингов с неправильной размерностью")
+                    
+                    # Удаляем их
+                    cur.execute("""
+                        DELETE FROM embeddings 
+                        WHERE dimensions != %s
+                    """, (expected_dimensions,))
+                    
+                    conn.commit()
+                    print(f"Удалено {cur.rowcount} эмбеддингов с неправильной размерностью")
+                
+                return len(invalid_embeddings) if invalid_embeddings else 0
+    except Exception as e:
+        logger.error(f"Ошибка при очистке эмбеддингов с неправильной размерностью: {str(e)}")
+        return -1
 
 if __name__ == '__main__':
     import logging

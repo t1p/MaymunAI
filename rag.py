@@ -7,6 +7,7 @@ from db import get_items_sample
 import tiktoken
 from debug_utils import debug_step
 from openai_api_models import client
+from utils import timeit
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ def truncate_text(text: str, max_tokens: int = None) -> str:
     logger.debug(f"Текст обрезан. Новая длина: {len(truncated)} символов")
     return truncated
 
+@timeit
 def generate_prompt(query: str, context_items: List[Dict[str, Any]]) -> str:
     """Генерирует промпт для модели"""
     logger.debug(f"Генерация промпта для запроса: {query}")
@@ -84,9 +86,23 @@ def generate_prompt(query: str, context_items: List[Dict[str, Any]]) -> str:
     
     return prompt
 
+@timeit
 def generate_answer(query: str, context_items: List[Dict[str, Any]]) -> str:
     """Генерирует ответ на основе контекста"""
     logger.debug("Генерация ответа")
+    
+    # Проверяем, есть ли реальный контекст
+    has_real_context = False
+    for item in context_items:
+        if not item['text'].startswith("Информация отсутствует"):
+            has_real_context = True
+            break
+    
+    # Если нет реального контекста, сообщаем об этом
+    if not has_real_context:
+        logger.warning("Отсутствует релевантный контекст, используем более простую модель")
+        return "Извините, в базе знаний не найдено информации по вашему запросу. Пожалуйста, уточните вопрос или используйте другие ключевые слова."
+    
     prompt = generate_prompt(query, context_items)
     
     # Получаем параметры генерации (возможно, обновленные пользователем)
@@ -116,7 +132,7 @@ def generate_answer(query: str, context_items: List[Dict[str, Any]]) -> str:
         
         answer = response.choices[0].message.content
         
-        # Отладка: показываем результат
+        # Оставить только этот один вызов в конце
         debug_step('generation', {
             'model': MODELS['generation']['name'],
             'answer_tokens': num_tokens_from_string(answer),

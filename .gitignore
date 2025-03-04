@@ -40,3 +40,4 @@ ENV/
 .DS_Store
 settings.py
 settings-infosoft.py
+debug/

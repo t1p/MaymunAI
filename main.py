@@ -6,6 +6,7 @@ from retrieval import search_similar_items
 from rag import generate_answer
 from config import DEBUG, SEARCH_SETTINGS, RAG_SETTINGS
 from debug_utils import confirm_action, debug_step
+from keywords import generate_keywords_for_query
 
 def setup_logging(debug: bool):
     """Настройка логгирования"""
@@ -51,7 +52,7 @@ def process_query(query: str, sample_size: int = None, top_k: int = None, root_i
     
     return answer
 
-def process_query_with_keywords(query: str, keywords: List[str], top_k: int = None, root_id: str = None) -> str:
+def process_query_with_keywords(query: str, keywords: List[str], top_k: int = None, root_id: str = None, parent_context: int = 0, child_context: int = 0) -> str:
     """
     Обрабатывает пользовательский запрос с использованием ключевых слов для поиска контекста
     """
@@ -101,6 +102,16 @@ def main():
     parser.add_argument('-v', '--view-tree', action='store_true', help='Показать дерево элементов')
     parser.add_argument('-s', '--search', help='Поиск по тексту в базе данных')
     parser.add_argument('-c', '--context', type=int, default=2, help='Размер контекста при поиске')
+    parser.add_argument('--clear-cache', action='store_true', help='Очистить кэш эмбеддингов')
+    parser.add_argument('--preload', action='store_true', help='Предзагрузить эмбеддинги частых запросов')
+    parser.add_argument('--migrate', action='store_true', help='Обновить структуру базы данных')
+    parser.add_argument('--rebuild-tables', action='store_true', help='Полностью перестроить таблицы эмбеддингов')
+    parser.add_argument('--parent-context', type=int, default=0, 
+                        help='Количество уровней родительского контекста (0 - отключено)')
+    parser.add_argument('--child-context', type=int, default=0, 
+                        help='Количество уровней дочернего контекста (0 - отключено)')
+    parser.add_argument('--clear-invalid', action='store_true', 
+                       help='Очистить эмбеддинги с неправильной размерностью')
     args = parser.parse_args()
     
     # Настройка логгирования и режима отладки
@@ -194,12 +205,75 @@ def main():
         print(f"Используется корневой элемент: {args.block_id}")
     print()
     
+    # Очистка кэша эмбеддингов
+    if args.clear_cache:
+        try:
+            from db import clear_embeddings_table
+            if clear_embeddings_table():
+                print("Кэш эмбеддингов успешно очищен")
+            return
+        except Exception as e:
+            logger.error(f"Ошибка при очистке кэша эмбеддингов: {str(e)}")
+    
+    # Предзагрузка частых запросов
+    if args.preload:
+        try:
+            from preload_embeddings import preload_query_embeddings
+            print("Запуск предзагрузки эмбеддингов частых запросов...")
+            preload_query_embeddings()
+            print("Предзагрузка завершена")
+            return
+        except Exception as e:
+            logger.error(f"Ошибка при предзагрузке запросов: {str(e)}")
+    
+    # Обновление структуры базы данных
+    if args.migrate:
+        try:
+            from migration import migrate_database
+            print("Обновление структуры базы данных...")
+            if migrate_database():
+                print("Структура базы данных успешно обновлена")
+            return
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении базы данных: {str(e)}")
+    
+    # Перестроение таблиц эмбеддингов
+    if args.rebuild_tables:
+        try:
+            from db import rebuild_tables
+            print("ВНИМАНИЕ: Все таблицы эмбеддингов и их данные будут удалены и созданы заново.")
+            confirm = input("Продолжить? (да/нет): ").strip().lower()
+            if confirm in ['да', 'д', 'yes', 'y']:
+                if rebuild_tables():
+                    print("Таблицы эмбеддингов успешно перестроены")
+                return
+        except Exception as e:
+            logger.error(f"Ошибка при перестроении таблиц: {str(e)}")
+    
+    # Очистка эмбеддингов с неправильной размерностью
+    if args.clear_invalid:
+        try:
+            from db import clear_invalid_embeddings
+            print("Очистка эмбеддингов с неправильной размерностью...")
+            count = clear_invalid_embeddings()
+            if count >= 0:
+                print(f"Очистка завершена. Удалено эмбеддингов: {count}")
+            return
+        except Exception as e:
+            logger.error(f"Ошибка при очистке эмбеддингов: {str(e)}")
+    
+    # Инициализируем переменную для хранения последнего запроса
+    last_query = "Как меня зовут?"
+    
     while True:
-        default_query = "Как меня зовут?"
-        query = input(f"\nВведите ваш вопрос [{default_query}]: ").strip()
+        # Используем последний запрос вместо статического текста
+        query = input(f"\nВведите ваш вопрос [{last_query}]: ").strip()
         
         if not query:
-            query = default_query
+            query = last_query
+        else:
+            # Запоминаем новый запрос, только если он не пустой
+            last_query = query
             
         if query.lower() in ['exit', 'quit', 'выход']:
             break
@@ -213,9 +287,34 @@ def main():
             
             if keywords:
                 keywords_list = [k.strip() for k in keywords.split(',') if k.strip()]
-                answer = process_query_with_keywords(query, keywords_list, root_id=args.block_id)
+                answer = process_query_with_keywords(
+                    query, 
+                    keywords_list, 
+                    root_id=args.block_id,
+                    parent_context=args.parent_context,
+                    child_context=args.child_context
+                )
             else:
-                answer = process_query(query, root_id=args.block_id)
+                # Если ключевые слова не указаны, используем модель для их генерации
+                keywords_list = generate_keywords_for_query(query)
+                logger.info(f"Автоматически подобранные ключевые слова: {', '.join(keywords_list)}")
+                print(f"\nАвтоматически подобранные ключевые слова: {', '.join(keywords_list)}")
+
+                # Даем возможность пользователю отредактировать ключевые слова
+                edit_keywords = input("Хотите отредактировать ключевые слова? (да/нет): ").strip().lower()
+                if edit_keywords in ['да', 'д', 'yes', 'y']:
+                    edited_keywords = input(f"Введите новые ключевые слова через запятую [{', '.join(keywords_list)}]: ").strip()
+                    if edited_keywords:
+                        keywords_list = [k.strip() for k in edited_keywords.split(',') if k.strip()]
+
+                print(f"Используем ключевые слова: {', '.join(keywords_list)}")
+                answer = process_query_with_keywords(
+                    query, 
+                    keywords_list, 
+                    root_id=args.block_id,
+                    parent_context=args.parent_context,
+                    child_context=args.child_context
+                )
                 
             print("\nОтвет:", answer)
         except Exception as e:
