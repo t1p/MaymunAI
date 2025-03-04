@@ -7,6 +7,7 @@ from rag import generate_answer
 from config import DEBUG, SEARCH_SETTINGS, RAG_SETTINGS
 from debug_utils import confirm_action, debug_step
 from keywords import generate_keywords_for_query
+import db_analyzer
 
 def setup_logging(debug: bool):
     """Настройка логгирования"""
@@ -44,6 +45,13 @@ def process_query(query: str, sample_size: int = None, top_k: int = None, root_i
         for i, item in enumerate(relevant_items, 1):
             print(f"\n--- Элемент {i} (сходство: {item['similarity']:.4f}) ---")
             print(item['text'][:200] + "..." if len(item['text']) > 200 else item['text'])
+            
+            # Добавляем расширенную информацию в расширенном режиме отладки
+            if DEBUG.get('extended', False):
+                print(f"ID элемента: {item.get('id', 'Нет ID')}")
+                print(f"Путь: {item.get('path', 'Нет информации о пути')}")
+                if 'metadata' in item:
+                    print("Метаданные:", item['metadata'])
     
     # Генерируем ответ
     logger.debug("Генерируем ответ")
@@ -84,6 +92,13 @@ def process_query_with_keywords(query: str, keywords: List[str], top_k: int = No
         for i, item in enumerate(relevant_items, 1):
             print(f"\n--- Элемент {i} (сходство: {item['similarity']:.4f}) ---")
             print(item['text'][:200] + "..." if len(item['text']) > 200 else item['text'])
+            
+            # Добавляем расширенную информацию в расширенном режиме отладки
+            if DEBUG.get('extended', False):
+                print(f"ID элемента: {item.get('id', 'Нет ID')}")
+                print(f"Путь: {item.get('path', 'Нет информации о пути')}")
+                if 'metadata' in item:
+                    print("Метаданные:", item['metadata'])
     
     # Генерируем ответ
     logger.debug("Генерируем ответ")
@@ -95,6 +110,7 @@ def process_query_with_keywords(query: str, keywords: List[str], top_k: int = No
 def main():
     parser = argparse.ArgumentParser(description='MaymunAI - Ваш персональный ассистент')
     parser.add_argument('-d', '--debug', action='store_true', help='Включить режим отладки')
+    parser.add_argument('-dd', '--debug_extended', action='store_true', help='Расширенный режим отладки')
     parser.add_argument('-i', '--info', action='store_true', help='Режим просмотра информации о блоках')
     parser.add_argument('-n', '--name', help='Поиск блока по названию')
     parser.add_argument('-b', '--block-id', help='ID блока для просмотра информации')
@@ -115,8 +131,9 @@ def main():
     args = parser.parse_args()
     
     # Настройка логгирования и режима отладки
-    setup_logging(args.debug)
-    DEBUG['enabled'] = args.debug
+    setup_logging(args.debug or args.debug_extended)
+    DEBUG['enabled'] = args.debug or args.debug_extended
+    DEBUG['extended'] = args.debug_extended  # Добавляем флаг расширенной отладки
     logger = logging.getLogger('main')
     
     # Создаем таблицы, если их нет
@@ -127,14 +144,24 @@ def main():
     except Exception as e:
         logger.error(f"Ошибка при инициализации базы данных: {str(e)}")
     
-    if args.debug:
+    if args.debug or args.debug_extended:
         logger.info("Запуск в режиме отладки")
+        
+        # Базовый режим отладки для обоих флагов
         try:
-            from db import debug_database, get_table_structure
-            debug_database()
-            get_table_structure()  # Добавляем вывод структуры таблицы
+            # Минимальная отладочная информация для обоих режимов
+            pass
         except Exception as e:
             logger.error(f"Ошибка при отладке базы данных: {str(e)}")
+            
+        # Расширенный режим отладки только для -dd
+        if args.debug_extended:
+            try:
+                from db import debug_database, get_table_structure
+                debug_database()
+                get_table_structure()
+            except Exception as e:
+                logger.error(f"Ошибка при расширенной отладке базы данных: {str(e)}")
     
     if args.info:
         if args.name:
@@ -318,8 +345,17 @@ def main():
                 
             print("\nОтвет:", answer)
         except Exception as e:
-            logger.error(f"Ошибка при обработке запроса: {str(e)}", exc_info=args.debug)
+            logger.error(f"Ошибка при обработке запроса: {str(e)}", exc_info=args.debug or args.debug_extended)
             print(f"\nПроизошла ошибка: {str(e)}")
+
+    # Выводим отладочную информацию о БД только в расширенном режиме отладки
+    if args.debug_extended:
+        try:
+            print("\nОтладочная информация о базе данных:")
+            db_analyzer.analyze_database(verbose=True)
+        except Exception as e:
+            logger.error(f"Ошибка при анализе базы данных: {str(e)}", exc_info=True)
+            print(f"\nОшибка при анализе базы данных: {str(e)}")
 
 if __name__ == '__main__':
     main() 

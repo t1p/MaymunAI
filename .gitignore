@@ -41,3 +41,8 @@ ENV/
 settings.py
 settings-infosoft.py
 debug/
+
+# Исключение отладочных скриптов
+debug/find_process_query.py
+db_structure_20250304_115126.json
+db_structure_20250304_115126.txt
