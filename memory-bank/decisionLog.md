@@ -30,5 +30,7 @@ This file records architectural and implementation decisions using a list format
 * Хранение эмбеддингов в базе данных с использованием типа VECTOR
 * Реализация косинусного сходства для поиска релевантных документов
 * Использование порогового значения сходства для фильтрации результатов
+
+| 2025-03-30 20:10:09 | Documenting launch parameters | Improve project documentation | Added detailed launch parameters description to productContext.md and systemPatterns.md |
 * Автоматическая генерация ключевых слов для запросов с использованием GPT-3.5 Turbo
 * Реализация механизма миграции базы данных для обновления схемы
