@@ -6,7 +6,7 @@ import logging
 from debug_utils import debug_step
 from openai_api_models import client
 import hashlib
-from db import get_connection
+from db import get_connection, create_embeddings_table, create_query_embeddings_table
 from utils import timeit, ProgressIndicator
 from base64 import b64decode
 import struct
@@ -20,43 +20,85 @@ def get_text_hash(text: str) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 def get_query_embedding_from_cache(query_text: str, model: str) -> Optional[List[float]]:
-    """
-    Ищет кэшированный эмбеддинг запроса в базе данных
-    
-    Args:
-        query_text: Текст запроса
-        model: Название модели эмбеддинга
-    
-    Returns:
-        Найденный эмбеддинг или None, если не найден
-    """
+    """Ищет кэшированный эмбеддинг запроса в базе данных"""
     try:
         text_hash = get_text_hash(query_text)
+        model_version = MODELS['embedding']['version']
+        
+        print(f"DEBUG: Ищем кэш для запроса: '{query_text[:50]}...'")
+        print(f"DEBUG: Хеш запроса: {text_hash}")
+        print(f"DEBUG: Модель: {model}, версия: {model_version}")
         
         with get_connection() as conn:
             with conn.cursor() as cur:
+                # Сначала проверим существование таблицы
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_name = 'query_embeddings'
+                    )
+                """)
+                table_exists = cur.fetchone()[0]
+                print(f"DEBUG: Таблица query_embeddings существует: {table_exists}")
+                
+                if not table_exists:
+                    print("DEBUG: Таблица query_embeddings не существует!")
+                    return None
+                
+                # Проверяем наличие записи
+                cur.execute("""
+                    SELECT COUNT(*) FROM query_embeddings 
+                    WHERE text_hash = %s AND model = %s AND model_version = %s
+                """, (text_hash, model, model_version))
+                count = cur.fetchone()[0]
+                print(f"DEBUG: Найдено записей с таким хешем и моделью: {count}")
+                
+                # Теперь пытаемся получить эмбеддинг
                 cur.execute("""
                     SELECT embedding, dimensions FROM query_embeddings 
-                    WHERE text_hash = %s AND model = %s
-                """, (text_hash, model))
+                    WHERE text_hash = %s AND model = %s AND model_version = %s
+                """, (text_hash, model, model_version))
                 
                 result = cur.fetchone()
                 
                 if result:
-                    embedding = result[0]
+                    print("DEBUG: Найден кэшированный эмбеддинг!")
+                    
+                    # Проверим тип и структуру данных эмбеддинга
+                    embedding_data = result[0]
+                    print(f"DEBUG: Тип эмбеддинга: {type(embedding_data)}")
+                    print(f"DEBUG: Первые 10 значений: {str(embedding_data)[:100]}")
+                    
+                    # Преобразуем в список, если нужно
+                    embedding = embedding_data
+                    if isinstance(embedding_data, str):
+                        print("DEBUG: Преобразуем строковое представление в список")
+                        try:
+                            # Обработка строки [1.2, 3.4, ...] -> список
+                            embedding = json.loads(embedding_data)
+                        except json.JSONDecodeError:
+                            # Для старого формата строки без пробелов
+                            embedding = [float(x) for x in embedding_data.strip('[]').split(',')]
+                    
                     dimensions = result[1]
                     
                     # Проверяем, соответствует ли размерность ожидаемой
-                    if dimensions != MODELS['embedding']['dimensions']:
-                        logger.warning(f"Кэшированный эмбеддинг запроса имеет неправильную размерность: {dimensions} вместо {MODELS['embedding']['dimensions']}")
+                    expected_dim = MODELS['embedding']['dimensions']
+                    print(f"DEBUG: Размерность эмбеддинга: {dimensions}, ожидаемая: {expected_dim}")
+                    
+                    if dimensions != expected_dim:
+                        print(f"DEBUG: Неправильная размерность, кэш не используется")
                         return None
                     
-                    logger.debug(f"Используем кэшированный эмбеддинг для запроса '{query_text[:30]}...'")
+                    print(f"DEBUG: Успешно получен кэшированный эмбеддинг!")
                     return embedding
-                
+                else:
+                    print("DEBUG: Кэшированный эмбеддинг не найден")
                 return None
     except Exception as e:
-        logger.error(f"Ошибка при получении кэшированного эмбеддинга запроса: {str(e)}")
+        print(f"ERROR при получении кэшированного эмбеддинга: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def save_query_embedding_to_cache(query_text: str, embedding: List[float], model: str) -> bool:
@@ -64,28 +106,59 @@ def save_query_embedding_to_cache(query_text: str, embedding: List[float], model
     try:
         text_hash = get_text_hash(query_text)
         dimensions = len(embedding)
-        model_version = MODELS['embedding']['version']  # Получаем версию модели
+        model_version = MODELS['embedding']['version']
+        
+        print(f"DEBUG: Сохраняем эмбеддинг для запроса: '{query_text[:50]}...'")
+        print(f"DEBUG: Хеш запроса: {text_hash}")
+        print(f"DEBUG: Размерность эмбеддинга: {dimensions}")
+        print(f"DEBUG: Модель: {model}, версия: {model_version}")
+        
+        # Преобразуем эмбеддинг в JSON строку для PostgreSQL
+        embedding_json = json.dumps(embedding)
+        print(f"DEBUG: Эмбеддинг преобразован в JSON: {embedding_json[:50]}...")
         
         with get_connection() as conn:
             with conn.cursor() as cur:
-                # Используем UPSERT через ON CONFLICT
+                # Проверяем существование таблицы
                 cur.execute("""
-                    INSERT INTO query_embeddings 
-                    (text, text_hash, embedding, dimensions, model, model_version, frequency, last_used, created_at) 
-                    VALUES (%s, %s, %s, %s, %s, %s, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    ON CONFLICT (text_hash, model, model_version) 
-                    DO UPDATE SET 
-                        embedding = EXCLUDED.embedding,
-                        dimensions = EXCLUDED.dimensions,
-                        frequency = query_embeddings.frequency + 1,
-                        last_used = CURRENT_TIMESTAMP
-                """, (query_text, text_hash, embedding, dimensions, model, model_version))
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_name = 'query_embeddings'
+                    )
+                """)
+                table_exists = cur.fetchone()[0]
+                print(f"DEBUG: Таблица query_embeddings существует: {table_exists}")
                 
-                conn.commit()
-                logger.debug(f"Сохранен эмбеддинг запроса '{query_text[:30]}...'")
-                return True
+                if not table_exists:
+                    print("DEBUG: Таблица query_embeddings не существует! Создаём...")
+                    create_query_embeddings_table()
+                
+                # Сохраняем или обновляем запись
+                try:
+                    cur.execute("""
+                        INSERT INTO query_embeddings 
+                        (text, text_hash, embedding, dimensions, model, model_version, frequency, last_used, created_at) 
+                        VALUES (%s, %s, %s, %s, %s, %s, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ON CONFLICT (text_hash, model, model_version) 
+                        DO UPDATE SET 
+                            embedding = EXCLUDED.embedding,
+                            dimensions = EXCLUDED.dimensions,
+                            frequency = query_embeddings.frequency + 1,
+                            last_used = CURRENT_TIMESTAMP
+                    """, (query_text, text_hash, embedding_json, dimensions, model, model_version))
+                    
+                    conn.commit()
+                    print(f"DEBUG: Успешно сохранен эмбеддинг запроса")
+                    return True
+                except Exception as e:
+                    print(f"ERROR при выполнении SQL запроса: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    return False
     except Exception as e:
-        logger.error(f"Ошибка при сохранении эмбеддинга запроса: {str(e)}")
+        print(f"ERROR при сохранении эмбеддинга запроса: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def decode_base64_embedding(base64_string):
@@ -111,16 +184,21 @@ def get_embedding(text: str, model: str = None) -> List[float]:
     Получает эмбеддинг для текста используя указанную модель
     """
     try:
+        # Явно создаем таблицы, если они не существуют
+        create_embeddings_table()
+        create_query_embeddings_table()
+        
         # Получаем модель из конфигурации или используем переданную
         if model is None:
             model = MODELS['embedding']['name']
             
-        # Проверяем кэш для запросов (только для коротких текстов)
-        if len(text) < 500:  # Кэшируем только короткие запросы
+        # Проверяем кэш для запросов (синхронизируем с условием сохранения)
+        if len(text) < 1500:  # Изменено с 500 на 1500
             cached_embedding = get_query_embedding_from_cache(text, model)
             if cached_embedding:
+                logger.info(f"Используем кэшированный эмбеддинг для текста длиной {len(text)}")
                 return cached_embedding
-            
+        
         # Первый вызов debug_step - ОСТАВИТЬ
         new_params = debug_step('embeddings', {
             'text': text,
@@ -145,7 +223,7 @@ def get_embedding(text: str, model: str = None) -> List[float]:
         embedding = response.data[0].embedding
         
         # Кэшируем короткие запросы
-        if len(text) < 500:
+        if len(text) < 1500:
             save_query_embedding_to_cache(text, embedding, model)
         
         return embedding

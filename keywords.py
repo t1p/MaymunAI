@@ -1,46 +1,56 @@
 import logging
 from typing import List
 from openai_api_models import client
-from config import KEYWORDS_SETTINGS
+from config import KEYWORDS_SETTINGS, MODELS, RAG_SETTINGS
 
 logger = logging.getLogger(__name__)
 
-def generate_keywords_for_query(query: str) -> List[str]:
+def generate_keywords_for_query(query: str, max_keywords: int = 5) -> list:
     """
-    Использует модель GPT для генерации ключевых слов для запроса
+    Генерирует ключевые слова для запроса с помощью GPT модели
     
     Args:
-        query: Текст запроса пользователя
+        query: Запрос пользователя
+        max_keywords: Максимальное количество ключевых слов
         
     Returns:
-        Список ключевых слов
+        Список ключевых слов/фраз
     """
     logger.debug(f"Генерация ключевых слов для запроса: {query}")
     
+    prompt = RAG_SETTINGS.get('keywords_prompt', 
+        "Выдели из запроса пользователя 3-5 ключевых слов или фраз для поиска информации. " + 
+        "Ответ должен содержать только список ключевых слов через запятую без пояснений. " +
+        "Запрос пользователя: {query}")
+    
+    # Подставляем запрос в шаблон промпта
+    formatted_prompt = prompt.format(query=query)
+    
     try:
-        # Формируем промпт
-        prompt = KEYWORDS_SETTINGS['prompt'].format(query=query)
-        
-        # Отправляем запрос к API
         response = client.chat.completions.create(
-            model=KEYWORDS_SETTINGS['model'],
+            model=MODELS['generation']['name'],
             messages=[
-                {"role": "system", "content": "Ты - помощник по подбору ключевых слов для поиска."},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": "Ты помогаешь выделять ключевые слова из запросов пользователей."},
+                {"role": "user", "content": formatted_prompt}
             ],
-            temperature=KEYWORDS_SETTINGS['temperature'],
-            max_tokens=KEYWORDS_SETTINGS['max_tokens']
+            temperature=0.3,
+            max_tokens=100
         )
         
-        # Извлекаем ответ
+        # Получаем ответ модели
         keywords_text = response.choices[0].message.content.strip()
-        logger.debug(f"Получены ключевые слова: {keywords_text}")
         
-        # Преобразуем в список
-        keywords = [k.strip() for k in keywords_text.split(',') if k.strip()]
+        # Разбиваем строку на отдельные ключевые слова
+        keywords = [kw.strip() for kw in keywords_text.split(',') if kw.strip()]
         
+        # Ограничиваем количество
+        keywords = keywords[:max_keywords]
+        
+        logger.debug(f"Сгенерированы ключевые слова: {keywords}")
         return keywords
+    
     except Exception as e:
         logger.error(f"Ошибка при генерации ключевых слов: {str(e)}")
-        # Возвращаем базовые ключевые слова в случае ошибки
-        return [query.split()[0]] if query.split() else ["информация"] 
+        # Возвращаем базовые ключевые слова из запроса в случае ошибки
+        fallback_keywords = [word.strip() for word in query.split()[:3] if len(word) > 3]
+        return fallback_keywords 

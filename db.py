@@ -788,26 +788,23 @@ def create_query_embeddings_table():
                         id SERIAL PRIMARY KEY,
                         text TEXT NOT NULL,
                         text_hash VARCHAR(64) NOT NULL,
-                        embedding VECTOR(3072),  -- Для text-embedding-3-large
+                        embedding TEXT NOT NULL,
                         dimensions INTEGER NOT NULL,
                         model VARCHAR(50) NOT NULL,
-                        model_version VARCHAR(20) NOT NULL,  -- Добавлено поле версии модели
-                        frequency INTEGER DEFAULT 1,  -- Счетчик использования запроса
-                        last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- Время последнего использования
+                        model_version VARCHAR(20) NOT NULL,
+                        frequency INTEGER DEFAULT 1,
+                        last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE(text_hash, model, model_version)
                     );
                     
                     CREATE INDEX IF NOT EXISTS idx_query_embeddings_text_hash 
                     ON query_embeddings(text_hash);
-                    
-                    CREATE INDEX IF NOT EXISTS idx_query_embeddings_frequency 
-                    ON query_embeddings(frequency DESC);
                 """)
                 conn.commit()
                 return True
     except Exception as e:
-        logger.error(f"Ошибка при создании таблицы эмбеддингов запросов: {str(e)}")
+        print(f"Ошибка при создании таблицы эмбеддингов запросов: {str(e)}")
         return False
 
 def clear_embeddings_table():
@@ -907,3 +904,6 @@ if __name__ == '__main__':
         print(f"Error getting data: {str(e)}")
 
     debug_database() 
+
+    # Вызовите эту функцию перед использованием
+    create_query_embeddings_table() 

@@ -137,6 +137,61 @@ def process_query_with_keywords(query: str, keywords: List[str], top_k: int = No
     
     return answer
 
+def check_query_embeddings_table():
+    """Проверка таблицы query_embeddings"""
+    from db import get_connection
+    
+    print("\n=== ПРОВЕРКА ТАБЛИЦЫ QUERY_EMBEDDINGS ===")
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Проверяем существование таблицы
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables 
+                    WHERE table_name = 'query_embeddings'
+                )
+            """)
+            exists = cur.fetchone()[0]
+            print(f"Таблица существует: {exists}")
+            
+            if exists:
+                # Проверяем структуру таблицы
+                cur.execute("""
+                    SELECT column_name, data_type, is_nullable 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'query_embeddings'
+                    ORDER BY ordinal_position
+                """)
+                columns = cur.fetchall()
+                print("\nСтруктура таблицы:")
+                for col in columns:
+                    print(f"  {col[0]}: {col[1]} (nullable: {col[2]})")
+                
+                # Проверяем количество записей
+                cur.execute("SELECT COUNT(*) FROM query_embeddings")
+                count = cur.fetchone()[0]
+                print(f"\nКоличество записей: {count}")
+                
+                # Получаем примеры записей
+                if count > 0:
+                    cur.execute("""
+                        SELECT id, text_hash, model, model_version, dimensions, 
+                               frequency, last_used, created_at 
+                        FROM query_embeddings 
+                        LIMIT 3
+                    """)
+                    rows = cur.fetchall()
+                    print("\nПримеры записей:")
+                    for row in rows:
+                        print(f"  ID: {row[0]}")
+                        print(f"  Хеш: {row[1]}")
+                        print(f"  Модель: {row[2]} (версия {row[3]})")
+                        print(f"  Размерность: {row[4]}")
+                        print(f"  Частота: {row[5]}")
+                        print(f"  Последнее использование: {row[6]}")
+                        print(f"  Создано: {row[7]}")
+                        print("")
+
 def main():
     parser = argparse.ArgumentParser(description='MaymunAI - Ваш персональный ассистент')
     parser.add_argument('-d', '--debug', action='store_true', help='Включить режим отладки')
@@ -321,7 +376,10 @@ def main():
             logger.error(f"Ошибка при очистке эмбеддингов: {str(e)}")
     
     # Инициализируем переменную для хранения последнего запроса
-    last_query = "Что такое бытие?"
+    last_query = "Как связаны бытие и сознание?"
+    # Инициализируем переменную для хранения последних ключевых слов
+    last_keywords = "бытие, сознание, связь"
+    
     # Внешний цикл для обработки команды "начало"
     restart_dialog = True
 
@@ -330,7 +388,8 @@ def main():
         # ... existing code ...
         
         # Устанавливаем начальное значение запроса при каждом перезапуске
-        last_query = "Что такое бытие?"
+        last_query = "Чем отличается бытие от бесконечности?"
+        last_keywords = "бытие, бесконечность, отличие"
         
         while True:
             # Используем последний запрос вместо статического текста
@@ -355,44 +414,59 @@ def main():
                 restart_dialog = True
                 break
             
-            # Запрос ключевых слов    
-            keywords = input("Введите ключевые слова или фразы через запятую для поиска контекста: ").strip()
+            # Запрос ключевых слов - показываем последние ключевые слова в скобках
+            keywords_prompt = input(f"Введите ключевые слова или фразы через запятую для поиска контекста [{last_keywords}]: ").strip()
+            
+            # Автоматическая генерация ключевых слов при вводе "!"
+            if keywords_prompt == "!":
+                logger.info("Запрос автоматической генерации ключевых слов")
+                try:
+                    # Получаем ключевые слова через GPT
+                    generated_keywords = generate_keywords_for_query(query)
+                    keywords_prompt = ", ".join(generated_keywords)
+                    print(f"\nАвтоматически сгенерированные ключевые слова: {keywords_prompt}")
+                    
+                    # Обновляем last_keywords для следующего запроса
+                    last_keywords = keywords_prompt
+                except Exception as e:
+                    logger.error(f"Ошибка при генерации ключевых слов: {str(e)}")
+                    print("Не удалось сгенерировать ключевые слова автоматически.")
+                    continue
+            
+            # Если пользователь не ввел ключевые слова, используем последние
+            if not keywords_prompt:
+                keywords_prompt = last_keywords
+            else:
+                # Запоминаем новые ключевые слова для следующего запроса
+                last_keywords = keywords_prompt
+                
+            # Разбиваем строку на отдельные ключевые слова
+            keywords = [keyword.strip() for keyword in keywords_prompt.split(',') if keyword.strip()]
+            
+            # Показываем список активных ключевых слов
+            if keywords:
+                print("\nАктивные ключевые слова для поиска:")
+                for i, keyword in enumerate(keywords, 1):
+                    print(f"  {i}. {keyword}")
+                print()  # Пустая строка для разделения
             
             try:
                 logger.debug(f"Обработка запроса: {query}")
                 logger.debug(f"Ключевые слова: {keywords}")
                 
                 if keywords:
-                    keywords_list = [k.strip() for k in keywords.split(',') if k.strip()]
+                    # Больше не нужно преобразовывать keywords в список, он уже список
                     answer = process_query_with_keywords(
                         query, 
-                        keywords_list, 
+                        keywords,  # Используем уже подготовленный список keywords
                         root_id=args.block_id,
                         parent_context=args.parent_context,
                         child_context=args.child_context
                     )
                 else:
-                    # Если ключевые слова не указаны, используем модель для их генерации
-                    keywords_list = generate_keywords_for_query(query)
-                    logger.info(f"Автоматически подобранные ключевые слова: {', '.join(keywords_list)}")
-                    print(f"\nАвтоматически подобранные ключевые слова: {', '.join(keywords_list)}")
-
-                    # Даем возможность пользователю отредактировать ключевые слова
-                    edit_keywords = input("Хотите отредактировать ключевые слова? (да/нет): ").strip().lower()
-                    if edit_keywords in ['да', 'д', 'yes', 'y']:
-                        edited_keywords = input(f"Введите новые ключевые слова через запятую [{', '.join(keywords_list)}]: ").strip()
-                        if edited_keywords:
-                            keywords_list = [k.strip() for k in edited_keywords.split(',') if k.strip()]
-
-                    print(f"Используем ключевые слова: {', '.join(keywords_list)}")
-                    answer = process_query_with_keywords(
-                        query, 
-                        keywords_list, 
-                        root_id=args.block_id,
-                        parent_context=args.parent_context,
-                        child_context=args.child_context
-                    )
-                    
+                    print("Не указаны ключевые слова. Используйте ключевые слова для поиска релевантного контекста.")
+                    continue
+                
                 print("\nОтвет:", answer)
             except Exception as e:
                 logger.error(f"Ошибка при обработке запроса: {str(e)}", exc_info=args.debug or args.debug_extended)
@@ -406,6 +480,9 @@ def main():
         except Exception as e:
             logger.error(f"Ошибка при анализе базы данных: {str(e)}", exc_info=True)
             print(f"\nОшибка при анализе базы данных: {str(e)}")
+
+    # Вызовите в начале программы
+    check_query_embeddings_table()
 
 if __name__ == '__main__':
     main() 

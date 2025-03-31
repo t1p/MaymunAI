@@ -79,50 +79,39 @@ def search_similar_items(query: str, items: List[Dict[str, Any]], top_k: int = N
         # Выводим пороговое значение
         print(f"Пороговое значение сходства: {threshold}")
     
-    # ИЗМЕНЯЕМ ЛОГИКУ: Сначала берем top_k лучших документов
+    # Сначала берем top_k лучших документов
     top_results = sorted_items[:top_k]
     
-    # Затем фильтруем по порогу только если у нас больше документов чем top_k
-    if len(sorted_items) > top_k:
-        # Отбираем элементы с сходством выше порога (старая логика)
-        filtered_results = [item for item in sorted_items if item['similarity'] >= threshold]
-        
-        # Если после фильтрации осталось больше документов чем top_k, берем только top_k
-        if len(filtered_results) > top_k:
-            result = filtered_results[:top_k]
-        # Если после фильтрации осталось меньше документов чем top_k или они все отфильтровались
-        elif filtered_results:
-            result = filtered_results
-        # Если все документы отфильтровались, берем первые top_k
-        else:
-            result = top_results
-    else:
-        # Если документов меньше чем top_k, берем все, но фильтруем по порогу
-        result = [item for item in sorted_items if item['similarity'] >= threshold]
-        
-        # Если все отфильтровались, берем все доступные
-        if not result and sorted_items:
-            result = sorted_items
+    # Затем фильтруем по порогу 
+    filtered_results = [item for item in sorted_items if item['similarity'] >= threshold]
     
-    # Если всё ещё нет результатов и есть отсортированные элементы, берем первый
-    if not result and sorted_items:
-        logger.warning("Не найдено релевантных элементов, используем первый элемент из выборки")
-        logger.debug(f"Максимальное сходство: {sorted_items[0]['similarity']}, порог: {threshold}")
-        
-        # Уменьшаем пороговое значение для этого запроса
-        if DEBUG['enabled']:
-            print(f"\nВНИМАНИЕ! Пороговое значение ({threshold}) слишком высокое.")
-            print(f"Максимальное найденное сходство: {sorted_items[0]['similarity']:.4f}")
-            print("Рекомендуется снизить пороговое значение в config.py (RAG_SETTINGS['similarity_threshold'])")
+    # Ограничиваем количество результатов по top_k
+    filtered_results = filtered_results[:top_k]
+    
+    # Если после фильтрации есть результаты, используем их
+    if filtered_results:
+        result = filtered_results
+    # Если нет результатов после фильтрации, используем top_k документов, но с предупреждением
+    else:
+        if sorted_items:
+            logger.warning("Не найдено релевантных элементов, используем лучшие результаты из выборки")
+            logger.debug(f"Максимальное сходство: {sorted_items[0]['similarity']}, порог: {threshold}")
             
-            # Используем все найденные элементы в пределах top_k
-            result = sorted_items[:top_k]
+            if DEBUG['enabled']:
+                print(f"\nВНИМАНИЕ! Пороговое значение ({threshold}) слишком высокое.")
+                print(f"Максимальное найденное сходство: {sorted_items[0]['similarity']:.4f}")
+                print("Рекомендуется снизить пороговое значение в config.py (RAG_SETTINGS['similarity_threshold'])")
+            
+            # Используем лучшие результаты, даже если они ниже порога
+            result = top_results
+        else:
+            result = []
     
     # Для отладки показываем найденные элементы
     if DEBUG['enabled']:
         print("\n==================== Поиск релевантных документов ====================\n")
         if result:
-            for i, item in enumerate(result, 1):
+            for i, item in enumerate(result[:top_k], 1):
                 print(f"Документ {i}:")
                 print(f"Сходство: {item['similarity']:.4f}")
                 print(f"Текст: {item['text'][:300]}..." if len(item['text']) > 300 else item['text'])
@@ -135,5 +124,4 @@ def search_similar_items(query: str, items: List[Dict[str, Any]], top_k: int = N
     
     # В конце функции проверяем, что возвращаем правильное количество элементов
     logger.debug(f"Возвращаем {len(result)} релевантных элементов из {len(sorted_items)} доступных")
-    
-    return result 
+    return result[:top_k] 
