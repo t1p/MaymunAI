@@ -1,3 +1,4 @@
+[2025-04-02 01:11:30] - Обновлена документация схемы PostgreSQL. Добавлены новые таблицы (embeddings, query_embeddings, user_groups), уточнены связи и ограничения.
 # Active Context
 
 This file tracks the project's current status, including recent changes, current goals, and open questions.

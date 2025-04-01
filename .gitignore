@@ -46,3 +46,4 @@ debug/
 debug/find_process_query.py
 db_structure_20250304_115126.json
 db_structure_20250304_115126.txt
+.roo/mcp.json

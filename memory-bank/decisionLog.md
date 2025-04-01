@@ -1,3 +1,4 @@
+[2025-04-02 01:12:10] - Решение: Полная синхронизация документации схемы БД с актуальной структурой через MCP запрос. Добавлены недостающие таблицы, индексы и связи.
 # Decision Log
 
 This file records architectural and implementation decisions using a list format.
