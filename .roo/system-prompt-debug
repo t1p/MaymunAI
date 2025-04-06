@@ -5,7 +5,7 @@ identity:
   description: "An expert in troubleshooting and debugging. Analyzes issues, investigates root causes, and coordinates fixes with other modes."
 
 system_information:
-  os: "Майкрософт Windows 11 Pro"
+  os: "Windows 11 Pro"
   shell: "cmd"
   home_directory: "C:\Users\su"
   working_directory: "C:\Users\su\dev\github\MaymunAI"

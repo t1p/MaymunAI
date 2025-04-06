@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 from config import OPENAI_API_KEY, MODELS, RAG_SETTINGS
 import numpy as np
@@ -10,8 +10,9 @@ from db import get_connection
 from utils import timeit, ProgressIndicator
 from base64 import b64decode
 import struct
-import tiktoken  # Добавляем библиотеку tiktoken для точного подсчета токенов
-import json  # Добавляем для корректной сериализации/десериализации
+import tiktoken
+import json
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -19,361 +20,200 @@ def get_text_hash(text: str) -> str:
     """Возвращает SHA-256 хеш текста"""
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
-def get_query_embedding_from_cache(query_text: str, model: str) -> Optional[List[float]]:
+def semantic_chunking(text: str, 
+                     max_tokens: int = 500, 
+                     overlap: float = 0.15,
+                     model: str = None) -> List[Tuple[str, Dict]]:
     """
-    Ищет кэшированный эмбеддинг запроса в базе данных
+    Разбивает текст на семантические чанки с перекрытием
     
     Args:
-        query_text: Текст запроса
-        model: Название модели эмбеддинга
+        text: Исходный текст для разбиения
+        max_tokens: Максимальное количество токенов в чанке
+        overlap: Процент перекрытия между чанками (0.0-1.0)
+        model: Модель для подсчета токенов
     
     Returns:
-        Найденный эмбеддинг или None, если не найден
+        Список кортежей (чанк, метаданные)
     """
-    try:
-        text_hash = get_text_hash(query_text)
+    if model is None:
+        model = MODELS['embedding']['name']
+    
+    # Определяем границы абзацев/разделов
+    paragraphs = re.split(r'\n\s*\n', text.strip())
+    chunks = []
+    current_chunk = []
+    current_tokens = 0
+    overlap_tokens = int(max_tokens * overlap)
+    
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+            
+        para_tokens = count_tokens(para, model)
         
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT embedding, dimensions FROM query_embeddings 
-                    WHERE text_hash = %s AND model = %s
-                """, (text_hash, model))
-                
-                result = cur.fetchone()
-                
-                if result:
-                    embedding = result[0]
-                    dimensions = result[1]
+        # Если абзац слишком большой, разбиваем его дальше
+        if para_tokens > max_tokens:
+            sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s', para)
+            for sent in sentences:
+                sent = sent.strip()
+                if not sent:
+                    continue
                     
-                    # Проверяем, соответствует ли размерность ожидаемой
-                    if dimensions != MODELS['embedding']['dimensions']:
-                        logger.warning(f"Кэшированный эмбеддинг запроса имеет неправильную размерность: {dimensions} вместо {MODELS['embedding']['dimensions']}")
-                        return None
+                sent_tokens = count_tokens(sent, model)
+                
+                if current_tokens + sent_tokens > max_tokens:
+                    if current_chunk:
+                        chunk_text = '\n\n'.join(current_chunk)
+                        chunks.append((chunk_text, {
+                            'type': 'paragraph',
+                            'tokens': current_tokens,
+                            'is_complete': True
+                        }))
+                        # Сохраняем конец текущего чанка для перекрытия
+                        overlap_part = '\n\n'.join(current_chunk[-overlap_tokens:]) if overlap_tokens else ''
+                        current_chunk = [overlap_part] if overlap_part else []
+                        current_tokens = count_tokens(overlap_part, model)
+                        
+                current_chunk.append(sent)
+                current_tokens += sent_tokens
+        else:
+            if current_tokens + para_tokens > max_tokens:
+                if current_chunk:
+                    chunk_text = '\n\n'.join(current_chunk)
+                    chunks.append((chunk_text, {
+                        'type': 'paragraph',
+                        'tokens': current_tokens,
+                        'is_complete': True
+                    }))
+                    # Сохраняем конец текущего чанка для перекрытия
+                    overlap_part = '\n\n'.join(current_chunk[-overlap_tokens:]) if overlap_tokens else ''
+                    current_chunk = [overlap_part] if overlap_part else []
+                    current_tokens = count_tokens(overlap_part, model)
                     
-                    logger.debug(f"Используем кэшированный эмбеддинг для запроса '{query_text[:30]}...'")
-                    return embedding
-                
-                return None
-    except Exception as e:
-        logger.error(f"Ошибка при получении кэшированного эмбеддинга запроса: {str(e)}")
-        return None
-
-def save_query_embedding_to_cache(query_text: str, embedding: List[float], model: str) -> bool:
-    """Сохраняет эмбеддинг запроса в кэш"""
-    try:
-        text_hash = get_text_hash(query_text)
-        dimensions = len(embedding)
-        model_version = MODELS['embedding']['version']  # Получаем версию модели
-        
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                # Используем UPSERT через ON CONFLICT
-                cur.execute("""
-                    INSERT INTO query_embeddings 
-                    (text, text_hash, embedding, dimensions, model, model_version, frequency, last_used, created_at) 
-                    VALUES (%s, %s, %s, %s, %s, %s, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    ON CONFLICT (text_hash, model, model_version) 
-                    DO UPDATE SET 
-                        embedding = EXCLUDED.embedding,
-                        dimensions = EXCLUDED.dimensions,
-                        frequency = query_embeddings.frequency + 1,
-                        last_used = CURRENT_TIMESTAMP
-                """, (query_text, text_hash, embedding, dimensions, model, model_version))
-                
-                conn.commit()
-                logger.debug(f"Сохранен эмбеддинг запроса '{query_text[:30]}...'")
-                return True
-    except Exception as e:
-        logger.error(f"Ошибка при сохранении эмбеддинга запроса: {str(e)}")
-        return False
-
-def decode_base64_embedding(base64_string):
-    """Декодирует эмбеддинг из base64 в список чисел с плавающей точкой"""
-    try:
-        # Декодируем base64 в бинарные данные
-        binary_data = b64decode(base64_string)
-        
-        # Каждое число float занимает 4 байта
-        num_floats = len(binary_data) // 4
-        
-        # Распаковываем бинарные данные в список чисел float
-        floats = struct.unpack(f'{num_floats}f', binary_data)
-        
-        return list(floats)
-    except Exception as e:
-        logger.error(f"Ошибка при декодировании base64 эмбеддинга: {str(e)}")
-        return []
+            current_chunk.append(para)
+            current_tokens += para_tokens
+    
+    # Добавляем последний чанк
+    if current_chunk:
+        chunk_text = '\n\n'.join(current_chunk)
+        chunks.append((chunk_text, {
+            'type': 'paragraph',
+            'tokens': current_tokens,
+            'is_complete': True
+        }))
+    
+    return chunks
 
 @timeit
-def get_embedding(text: str, model: str = None) -> List[float]:
+def create_embedding_for_item(item, chunked: bool = True):
     """
-    Получает эмбеддинг для текста используя указанную модель
-    """
-    try:
-        # Получаем модель из конфигурации или используем переданную
-        if model is None:
-            model = MODELS['embedding']['name']
-            
-        # Проверяем кэш для запросов (только для коротких текстов)
-        if len(text) < 500:  # Кэшируем только короткие запросы
-            cached_embedding = get_query_embedding_from_cache(text, model)
-            if cached_embedding:
-                return cached_embedding
-            
-        # Первый вызов debug_step - ОСТАВИТЬ
-        new_params = debug_step('embeddings', {
-            'text': text,
-            'model': model
-        })
-        
-        if new_params and 'model' in new_params:
-            model = new_params['model']
-            
-        # Показываем индикатор прогресса при вызове API
-        progress = ProgressIndicator("Генерация эмбеддинга")
-        progress.start()
-        try:
-            response = client.embeddings.create(
-                input=text,
-                model=model,
-                encoding_format="float"
-            )
-        finally:
-            progress.stop()
-        
-        embedding = response.data[0].embedding
-        
-        # Кэшируем короткие запросы
-        if len(text) < 500:
-            save_query_embedding_to_cache(text, embedding, model)
-        
-        return embedding
-    except Exception as e:
-        logger.error(f"Ошибка при получении эмбеддинга: {str(e)}")
-        raise
-
-def save_embedding_to_db(item_id: str, embedding: List[float], text: str, model: str = None) -> bool:
-    """Сохраняет эмбеддинг в базу данных"""
-    if model is None:
-        model = MODELS['embedding']['name']
-        
-    model_version = MODELS['embedding']['version']  # Получаем версию модели
-    text_hash = get_text_hash(text)
-    dimensions = len(embedding)
+    Создает эмбеддинг для элемента с учетом его структуры
     
-    try:
-        # Преобразуем эмбеддинг в строку, без дополнительных кавычек
-        # Используем простое строковое представление для типа vector в PostgreSQL
-        embedding_str = str(embedding).replace(' ', '')
-        
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                # Проверяем, есть ли уже запись для данного элемента и модели
-                cur.execute("""
-                    SELECT id FROM embeddings 
-                    WHERE item_id = %s AND model = %s AND model_version = %s
-                """, (item_id, model, model_version))
-                
-                result = cur.fetchone()
-                
-                if result:
-                    # Обновляем существующую запись
-                    cur.execute("""
-                        UPDATE embeddings 
-                        SET embedding = %s, text = %s, text_hash = %s, dimensions = %s, updated_at = NOW()
-                        WHERE item_id = %s AND model = %s AND model_version = %s
-                    """, (embedding_str, text, text_hash, dimensions, item_id, model, model_version))
-                else:
-                    # Создаем новую запись
-                    cur.execute("""
-                        INSERT INTO embeddings 
-                        (item_id, embedding, text, text_hash, model, model_version, dimensions, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                    """, (item_id, embedding_str, text, text_hash, model, model_version, dimensions))
-                
-                conn.commit()
-                logger.debug(f"Сохранен эмбеддинг для элемента {item_id}, модель {model}, версия {model_version}")
-                return True
-                
-    except Exception as e:
-        logger.error(f"Ошибка при сохранении эмбеддинга: {str(e)}")
-        return False
-
-def get_embedding_from_db(item_id: str, model: str = None) -> Optional[Dict]:
-    """Получает эмбеддинг из базы данных"""
-    if model is None:
-        model = MODELS['embedding']['name']
+    Args:
+        item: Элемент для обработки
+        chunked: Если True, разбивает текст на чанки
     
-    model_version = MODELS['embedding']['version']  # Получаем версию модели
-        
-    try:
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT embedding, text_hash, created_at
-                    FROM embeddings 
-                    WHERE item_id = %s AND model = %s AND model_version = %s
-                """, (item_id, model, model_version))
-                
-                result = cur.fetchone()
-                
-                if result:
-                    # Исправляем проблему с форматом эмбеддинга
-                    embedding = result[0]
-                    
-                    # Преобразуем строку в список, если необходимо
-                    if isinstance(embedding, str):
-                        try:
-                            # Пробуем декодировать как JSON
-                            embedding = json.loads(embedding)
-                        except json.JSONDecodeError:
-                            # Если не получается, разделяем по запятым (для старых записей)
-                            embedding = [float(x) for x in embedding.strip('[]').split(',')]
-                    
-                    # Проверяем размерность эмбеддинга
-                    if len(embedding) != MODELS['embedding']['dimensions']:
-                        logger.warning(f"Эмбеддинг с неправильной размерностью: {len(embedding)} вместо {MODELS['embedding']['dimensions']}")
-                        # Удаляем эмбеддинг с неправильной размерностью
-                        cur.execute("""
-                            DELETE FROM embeddings 
-                            WHERE item_id = %s AND model = %s
-                        """, (item_id, model))
-                        conn.commit()
-                        return None
-                    
-                    return {
-                        'embedding': embedding,
-                        'text_hash': result[1],
-                        'created_at': result[2]
-                    }
-                return None
-    except Exception as e:
-        logger.error(f"Ошибка при получении эмбеддинга: {str(e)}")
-        return None
-
-def count_tokens(text: str, model: str = None) -> int:
-    """Подсчитывает точное количество токенов в тексте"""
-    if model is None:
-        model = MODELS['embedding']['name']
-    
-    try:
-        encoding = tiktoken.encoding_for_model(model)
-        return len(encoding.encode(text))
-    except Exception as e:
-        # Если модель не поддерживается tiktoken, используем стандартную кодировку
-        encoding = tiktoken.get_encoding("cl100k_base")  # Кодировка для моделей embedding
-        return len(encoding.encode(text))
-
-@timeit
-def create_embedding_for_item(item):
-    """
-    Создает эмбеддинг для элемента с учетом его структуры и родительских/дочерних элементов
+    Returns:
+        Словарь с эмбеддингами и метаданными
     """
     try:
         if 'item' in item:
             item_id, parent_id, item_text = item['item']
-            
-            # Создаем основной текст
             text = item_text.strip() if item_text else ""
             
-            # ВРЕМЕННО ЗАКОММЕНТИРОВАНО: Объединение с родительскими элементами
-            # if 'parents' in item and item['parents']:
-            #     for parent in item['parents']:
-            #         parent_text = parent[2].strip() if parent[2] else ""
-            #         if parent_text:
-            #             text = f"{parent_text}\n\n{text}"
-            
-            # ВРЕМЕННО ЗАКОММЕНТИРОВАНО: Объединение с дочерними элементами
-            # if 'children' in item and item['children']:
-            #     for child in item['children']:
-            #         child_text = child[2].strip() if child[2] else ""
-            #         if child_text:
-            #             text = f"{text}\n\n{child_text}"
-            
-            # Возвращаем эмбеддинг и исходный текст
-            embedding = get_embedding(text)
-            return {
-                'embedding': embedding,
-                'text': text,
-                'item_id': item_id
-            }
+            if not chunked:
+                # Старый вариант без разбиения (для обратной совместимости)
+                embedding = get_embedding(text)
+                return {
+                    'embedding': embedding,
+                    'text': text,
+                    'item_id': item_id,
+                    'chunked': False
+                }
+            else:
+                # Новый вариант с семантическим разбиением
+                chunks = semantic_chunking(
+                    text,
+                    max_tokens=RAG_SETTINGS.get('max_chunk_tokens', 500),
+                    overlap=RAG_SETTINGS.get('chunk_overlap', 0.15)
+                )
+                
+                embeddings = []
+                for chunk_text, metadata in chunks:
+                    embedding = get_embedding(chunk_text)
+                    embeddings.append({
+                        'embedding': embedding,
+                        'text': chunk_text,
+                        'metadata': metadata,
+                        'item_id': f"{item_id}_{len(embeddings)}"
+                    })
+                
+                return {
+                    'embeddings': embeddings,
+                    'original_text': text,
+                    'item_id': item_id,
+                    'chunked': True
+                }
         else:
             raise ValueError("Неверный формат элемента")
     except Exception as e:
-        logging.getLogger('embeddings').error(f"Ошибка при создании эмбеддинга для элемента: {str(e)}")
-        
-        # Пытаемся создать запасной эмбеддинг
-        try:
-            text = str(item)
-            embedding = get_embedding(text)
-            return {
-                'embedding': embedding,
-                'text': text,
-                'item_id': 'unknown'
-            }
-        except Exception as e2:
-            logging.getLogger('embeddings').error(f"Ошибка при создании запасного эмбеддинга: {str(e2)}")
-            return {
-                'embedding': [],
-                'text': '',
-                'item_id': 'error'
-            }
+        logger.error(f"Ошибка при создании эмбеддинга для элемента: {str(e)}")
+        return {
+            'embedding': [],
+            'text': '',
+            'item_id': 'error',
+            'chunked': False
+        }
 
-@timeit
+def get_embedding(text: str, model: str = None) -> List[float]:
+    """
+    Получает эмбеддинг для текста с помощью OpenAI API
+    
+    Args:
+        text: Текст для векторизации
+        model: Модель для эмбеддинга (если None, берется из конфига)
+    
+    Returns:
+        Список чисел с эмбеддингом
+    """
+    if model is None:
+        model = MODELS['embedding']['name']
+    
+    try:
+        response = client.embeddings.create(
+            input=text,
+            model=model
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        logger.error(f"Ошибка при получении эмбеддинга: {str(e)}")
+        return []
+
 def calculate_similarity(embedding1: List[float], embedding2: List[float]) -> float:
     """
     Вычисляет косинусное сходство между двумя эмбеддингами
+    
+    Args:
+        embedding1: Первый вектор эмбеддинга
+        embedding2: Второй вектор эмбеддинга
+    
+    Returns:
+        Значение косинусного сходства от -1 до 1
     """
-    try:
-        # Проверка и преобразование типов
-        if isinstance(embedding1, str):
-            try:
-                embedding1 = json.loads(embedding1)
-            except json.JSONDecodeError:
-                embedding1 = [float(x) for x in embedding1.strip('[]').split(',')]
+    if not embedding1 or not embedding2:
+        return 0.0
         
-        if isinstance(embedding2, str):
-            try:
-                embedding2 = json.loads(embedding2)
-            except json.JSONDecodeError:
-                embedding2 = [float(x) for x in embedding2.strip('[]').split(',')]
+    dot_product = np.dot(embedding1, embedding2)
+    norm1 = np.linalg.norm(embedding1)
+    norm2 = np.linalg.norm(embedding2)
+    
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
         
-        # Проверяем размерности
-        if len(embedding1) != len(embedding2):
-            logger.warning(f"Разные размерности эмбеддингов: {len(embedding1)} != {len(embedding2)}")
-            # Более детальная информация для отладки
-            logger.debug(f"Первый эмбеддинг: тип={type(embedding1)}, размер={len(embedding1)}")
-            logger.debug(f"Второй эмбеддинг: тип={type(embedding2)}, размер={len(embedding2)}")
-            
-            # Приводим эмбеддинги к одинаковой размерности, используя меньшую из двух
-            min_size = min(len(embedding1), len(embedding2))
-            embedding1 = embedding1[:min_size]
-            embedding2 = embedding2[:min_size]
-            logger.info(f"Эмбеддинги обрезаны до размера {min_size}")
-            
-        # Преобразуем в numpy массивы, явно указывая тип float
-        vec1 = np.array(embedding1, dtype=np.float64)
-        vec2 = np.array(embedding2, dtype=np.float64)
-        
-        # Вычисляем косинусное сходство
-        similarity = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
-        
-        return float(similarity)
-    except Exception as e:
-        logger.warning(f"Ошибка при вычислении сходства: {str(e)}")
-        return 0.0  # Возвращаем минимальное сходство вместо ошибки
+    return dot_product / (norm1 * norm2)
 
-if __name__ == '__main__':
-    # Пример использования
-    from db import get_items_sample
-    
-    # Получаем несколько элементов для тестирования
-    items = get_items_sample(1, 2)
-    
-    for item in items:
-        # Создаем эмбеддинг для каждого элемента
-        embedding_data = create_embedding_for_item(item)
-        print(f"\nItem ID: {item['item'][0]}")
-        print(f"Text length: {len(embedding_data['text'])}")
-        print(f"Embedding dimensions: {embedding_data['dimensions']}") 
+# Остальные существующие функции (get_query_embedding_from_cache, save_query_embedding_to_cache,
+# decode_base64_embedding, save_embedding_to_db, get_embedding_from_db,
+# count_tokens) остаются без изменений

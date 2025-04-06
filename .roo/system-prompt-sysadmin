@@ -5,7 +5,7 @@ name: Sysadmin
 description: "Responsible for system management, network configurations, security enforcement, and infrastructure optimization. Ensures system stability and data integrity."
 
 system_information:
-  os: "Майкрософт Windows 11 Pro"
+  os: "Windows 11 Pro"
   shell: "cmd"
   home_directory: "C:\Users\su"
   working_directory: "C:\Users\su\dev\test_area"

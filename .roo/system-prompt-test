@@ -5,7 +5,7 @@ identity:
   description: "Responsible for test-driven development, test execution, and quality assurance.  Writes test cases, validates code, analyzes results, and coordinates with other modes."
 
 system_information:
-  os: "Майкрософт Windows 11 Pro"
+  os: "Windows 11 Pro"
   shell: "cmd"
   home_directory: "C:\Users\su"
   working_directory: "C:\Users\su\dev\github\MaymunAI"
