@@ -215,5 +215,21 @@ def calculate_similarity(embedding1: List[float], embedding2: List[float]) -> fl
     return dot_product / (norm1 * norm2)
 
 # Остальные существующие функции (get_query_embedding_from_cache, save_query_embedding_to_cache,
-# decode_base64_embedding, save_embedding_to_db, get_embedding_from_db,
-# count_tokens) остаются без изменений
+# decode_base64_embedding, save_embedding_to_db, get_embedding_from_db) остаются без изменений
+
+def count_tokens(text: str, model: str) -> int:
+    """Подсчитывает количество токенов в тексте для указанной модели
+    
+    Args:
+        text: Текст для анализа
+        model: Идентификатор модели (например, "text-embedding-ada-002")
+        
+    Returns:
+        Количество токенов в тексте
+    """
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+        return len(encoding.encode(text))
+    except Exception as e:
+        logger.error(f"Ошибка при подсчёте токенов: {str(e)}")
+        return 0

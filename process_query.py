@@ -4,6 +4,7 @@ from config import SEARCH_SETTINGS, RAG_SETTINGS, DEBUG
 from db import get_items_sample
 from embeddings import get_embedding, calculate_similarity, create_embedding_for_item
 from debug_utils import debug_step
+from retrieval import extract_text
 
 def process_query_with_keywords(query: str, keywords: List[str], top_k: int = None, root_id: str = None, parent_context: int = 0, child_context: int = 0) -> str:
     """
@@ -48,7 +49,11 @@ def process_query_with_keywords(query: str, keywords: List[str], top_k: int = No
             print("\nНайденные релевантные элементы:")
             for i, item in enumerate(relevant_items, 1):
                 print(f"\n--- Элемент {i} (сходство: {item['similarity']:.4f}) ---")
-                print(item['text'][:200] + "..." if len(item['text']) > 200 else item['text'])
+                text = extract_text(item)
+                if text is None:
+                    print("[Текст не найден]")
+                else:
+                    print(text[:200] + "..." if len(text) > 200 else text)
         
         # Генерируем ответ
         logger.debug("Генерируем ответ")
@@ -89,13 +94,11 @@ def process_query(query: str, keywords: List[str] = None, context: List[Dict[str
         if items:
             print("\n==================== Найденные элементы по ключевым словам ====================\n")
             for idx, item in enumerate(items, 1):
-                # Извлекаем текст элемента - структура может отличаться в зависимости от вашей реализации
-                item_text = item.get('text', '')
-                if not item_text and 'item' in item:
-                    if isinstance(item['item'], list) and len(item['item']) > 1:
-                        item_text = item['item'][1]  # Обычно текст во втором элементе списка
-                    elif isinstance(item['item'], dict) and 'text' in item['item']:
-                        item_text = item['item']['text']
+                # Извлекаем текст элемента с помощью универсальной функции
+                item_text = extract_text(item)
+                if item_text is None:
+                    logger.warning(f"Не удалось извлечь текст для элемента ID: {item_id}")
+                    item_text = "[Текст не найден]"
                 
                 # Получаем ID элемента
                 item_id = None

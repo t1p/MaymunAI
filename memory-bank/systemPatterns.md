@@ -1,3 +1,10 @@
+[2025-04-07 09:28:36] - Паттерны обработки эмбеддингов:
+1. Поддержка chunked/не chunked режимов:
+   - Проверка наличия 'embeddings' или 'embedding'
+   - Использование первого эмбеддинга для chunked режима
+2. Валидация обязательных полей:
+   - Проверка наличия 'text' перед обработкой
+   - Логирование ошибок при отсутствии полей
 # System Patterns *Optional*
 
 This file documents recurring patterns and standards used in the project.
