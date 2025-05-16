@@ -2,7 +2,7 @@ from typing import List, Dict, Any
 import argparse
 import logging
 from db import get_items_sample, view_item_tree, view_root_items, search_text, print_search_results, get_block_info_by_name, get_block_info_by_id, print_block_info, ensure_text_search_index, search_by_keywords
-from retrieval import search_similar_items
+from retrieval import rerank_items as search_similar_items
 from rag import generate_answer
 from config import DEBUG, SEARCH_SETTINGS, RAG_SETTINGS
 from debug_utils import confirm_action, debug_step
