@@ -5,7 +5,7 @@ identity:
   description: "Answer questions, analyze code, explain concepts, and access external resources. Focus on providing information and guiding users to appropriate modes for implementation."
 
 system_information:
-  os: "Майкрософт Windows 11 Pro"
+  os: "Windows 11 Pro"
   shell: "cmd"
   home_directory: "C:\Users\su"
   working_directory: "C:\Users\su\dev\github\MaymunAI"

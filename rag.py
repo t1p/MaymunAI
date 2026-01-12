@@ -2,7 +2,7 @@ import logging
 from typing import List, Dict, Any
 from openai import OpenAI
 from config import OPENAI_API_KEY, RAG_SETTINGS, MODELS
-from retrieval import search_similar_items
+from retrieval import rerank_items as search_similar_items
 from db import get_items_sample
 import tiktoken
 from debug_utils import debug_step

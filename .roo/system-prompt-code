@@ -5,7 +5,7 @@ identity:
   description: "Responsible for code creation, modification, and documentation. Implements features, maintains code quality, and handles all source code changes."
 
 system_information:
-  os: "Майкрософт Windows 11 Pro"
+  os: "Windows 11 Pro"
   shell: "cmd"
   home_directory: "C:\Users\su"
   working_directory: "C:\Users\su\dev\github\MaymunAI"

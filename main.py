@@ -2,12 +2,29 @@ from typing import List, Dict, Any
 import argparse
 import logging
 from db import get_items_sample, view_item_tree, view_root_items, search_text, print_search_results, get_block_info_by_name, get_block_info_by_id, print_block_info, ensure_text_search_index, search_by_keywords
-from retrieval import search_similar_items
+from retrieval import rerank_items as search_similar_items
 from rag import generate_answer
 from config import DEBUG, SEARCH_SETTINGS, RAG_SETTINGS
 from debug_utils import confirm_action, debug_step
 from keywords import generate_keywords_for_query
 import db_analyzer
+
+def convert_item_format(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Преобразует формат элементов из БД в формат, ожидаемый retrieval.py"""
+    converted = []
+    for item in items:
+        if 'item' in item and len(item['item']) > 2:
+            converted_item = {
+                'id': item['item'][0],
+                'text': item['item'][2],
+                'item': item['item'],  # сохраняем оригинальную структуру
+                'parents': item.get('parents', []),
+                'children': item.get('children', [])
+            }
+            converted.append(converted_item)
+        else:
+            logger.warning(f"Пропущен элемент с некорректным форматом: {item}")
+    return converted
 
 def setup_logging(debug: bool):
     """Настройка логгирования"""
@@ -34,9 +51,12 @@ def process_query(query: str, sample_size: int = None, top_k: int = None, root_i
     items = get_items_sample(1, sample_size, root_id=root_id)
     logger.debug(f"Получено {len(items)} элементов")
     
+    # Преобразуем формат элементов
+    converted_items = convert_item_format(items)
+    
     # Ищем релевантные элементы
     logger.debug(f"Ищем {top_k} релевантных элементов")
-    relevant_items = search_similar_items(query, items, top_k)
+    relevant_items = search_similar_items(query, converted_items, top_k)
     logger.debug(f"Найдено {len(relevant_items)} релевантных элементов")
     
     # В режиме отладки показываем найденные элементы
@@ -101,9 +121,15 @@ def process_query_with_keywords(query: str, keywords: List[str], top_k: int = No
         logger.debug(f"По ключевым словам ничего не найдено, используем стандартную выборку")
         items = get_items_sample(1, SEARCH_SETTINGS['sample_size'], root_id=root_id)
     
-    # Ищем релевантные элементы (передаем оригинальные элементы)
+    # Преобразуем формат элементов
+    converted_items = convert_item_format(items)
+    
+    # Обновляем словарь для быстрого поиска ID по тексту
+    text_to_id_map = {item['text']: item['id'] for item in converted_items}
+    
+    # Ищем релевантные элементы
     logger.debug(f"Ищем {top_k} релевантных элементов")
-    relevant_items = search_similar_items(query, items, top_k)
+    relevant_items = search_similar_items(query, converted_items, top_k)
     logger.debug(f"Найдено {len(relevant_items)} релевантных элементов")
     
     # В режиме отладки показываем найденные элементы
