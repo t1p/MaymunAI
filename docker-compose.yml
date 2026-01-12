@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    container_name: maymunai_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: maymunai
+      POSTGRES_USER: maymun
+      POSTGRES_PASSWORD: ydYy9^&.q4#P9
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./maymunai_backup.dump:/docker-entrypoint-initdb.d/maymunai_backup.dump:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maymun -d maymunai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: maymunai_app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=maymunai
+      - DB_USER=maymun
+      - DB_PASSWORD=ydYy9^&.q4#P9
+    volumes:
+      - .:/app
+      - /app/__pycache__
+    # Удалить или закомментировать, если приложение не нуждается в портах
+    # ports:
+    #   - "8000:8000"
+    stdin_open: true
+    tty: true
+    command: ["sh", "-c", "ln -sf settings-docker.py settings.py && python main.py"]
+
+volumes:
+  postgres_data:
