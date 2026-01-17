@@ -23,6 +23,8 @@ wheels/
 
 # Virtual Environment
 .env
+.local/
+configs/local/
 .venv
 venv/
 ENV/
