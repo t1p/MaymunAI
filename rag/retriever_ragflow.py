@@ -43,6 +43,3 @@ def retrieve(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         )
 
     return results
-
-def retrieve(query: str, top_k: int = 5):
-    raise NotImplementedError("RAGFlow retriever is not implemented yet")

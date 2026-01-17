@@ -21,6 +21,8 @@
 
 ## Недавние изменения
 
+2026-01-17 02:09:20 - Добавлены тесты retriever_fastgpt/retriever_ragflow и устранены заглушки NotImplementedError в ретриверах.
+2026-01-17 03:03:17 - Исправлен парсинг config.yaml: mcp.pg_server теперь маппится в MCPPostgresServer; добавлены тесты загрузки конфигурации.
 2026-01-17 01:47:32 - Обновлена документация (README/DOCKER_README) и добавлен план тестирования/валидации.
 2026-01-17 01:45:55 - Добавлены CLI-каркасы ingest_docs, build_index, test_query с argparse.
 2026-01-17 01:44:28 - Добавлены загрузчик промптов и базовые шаблоны prompts/system и prompts/modes; обновлено логирование (JSON формат).
