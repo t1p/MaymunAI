@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  fastgpt:
+    image: ghcr.io/labring/fastgpt:latest
+    container_name: fastgpt
+    ports:
+      - "3000:3000"
+    environment:
+      - TZ=UTC
+    volumes:
+      - fastgpt-data:/app/data
+
+volumes:
+  fastgpt-data:
+

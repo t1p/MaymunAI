@@ -41,7 +41,7 @@ services:
     #   - "8000:8000"
     stdin_open: true
     tty: true
-    command: ["sh", "-c", "ln -sf settings-docker.py settings.py && python main.py"]
+
 
 volumes:
   postgres_data:

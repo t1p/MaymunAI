@@ -239,7 +239,15 @@ def main():
                         help='Количество уровней дочернего контекста (0 - отключено)')
     parser.add_argument('--clear-invalid', action='store_true', 
                        help='Очистить эмбеддинги с неправильной размерностью')
+    parser.add_argument('--config', default='config.yaml', help='Путь к config.yaml')
+    parser.add_argument('--run-as', choices=['client_app', 'mcp_server'], default=None, help='Режим запуска (переопределяет config)')
     args = parser.parse_args()
+
+    # Переключение на новый раннер без ломки существующего CLI
+    if args.run_as == 'mcp_server':
+        from modes.runner_mcp_server import run as run_mcp
+        run_mcp()
+        return
     
     # Настройка логгирования и режима отладки
     setup_logging(args.debug or args.debug_extended)

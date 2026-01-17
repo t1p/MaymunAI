@@ -2,7 +2,7 @@
 
 ## Описание
 
-MaymunAI - это персональный ассистент, который использует технологию RAG (Retrieval-Augmented Generation) для ответов на вопросы пользователя на основе базы знаний, хранящейся в PostgreSQL. Система сочетает семантический поиск с использованием эмбеддингов OpenAI и генерацию ответов на базе GPT-4 Turbo, обеспечивая релевантные и контекстуализированные ответы.
+MaymunAI - это персональный ассистент, который использует технологию RAG (Retrieval-Augmented Generation) для ответов на вопросы пользователя на основе базы знаний, хранящейся в PostgreSQL. Система сочетает семантический поиск с использованием эмбеддингов OpenAI и генерацию ответов на базе GPT-4 Turbo, обеспечивая релевантные и контекстуализированные ответы. Проект развивается к модульной архитектуре с переключаемыми ретриверами (native/FastGPT/RAGFlow) и режимами MCP.
 
 ## Ключевые особенности
 
@@ -14,6 +14,8 @@ MaymunAI - это персональный ассистент, который и
 - **Интерактивный режим отладки** с возможностью настройки параметров
 - **Анализ базы данных** и миграция схемы
 - **Гибкая настройка контекста** (родительский и дочерний уровни)
+- **Переключаемые ретриверы**: native, FastGPT, RAGFlow (через config.yaml)
+- **MCP-режим**: запуск MaymunAI как MCP-сервера (каркас)
 
 ## Архитектура
 
@@ -63,9 +65,9 @@ cd MaymunAI
 pip install -r requirements.txt
 ```
 
-3. Настройте переменные окружения. Создайте файл `.env` на основе `settings.example.py`:
+3. Настройте переменные окружения. Создайте файл `.env` на основе `.env.example`:
 ```bash
-cp settings.example.py .env
+cp .env.example .env
 ```
 
 Отредактируйте `.env` файл, указав:
@@ -127,6 +129,23 @@ python main.py --migrate
 python main.py
 ```
 
+### Режимы запуска (config.yaml)
+
+В корне проекта используется `config.yaml` для переключения режимов:
+
+```yaml
+mode:
+  db_access: native_pg   # native_pg | mcp_pg
+  retriever: RAG_NATIVE  # RAG_NATIVE | RAG_FASTGPT | RAG_RAGFLOW
+  run_as: client_app     # client_app | mcp_server
+```
+
+Для режима MCP:
+
+```bash
+python main.py --run-as mcp_server
+```
+
 ### Параметры запуска
 
 - `-d`, `--debug` - Включить режим отладки
@@ -156,31 +175,20 @@ python main.py
 Для выхода введите `exit`, `quit` или `выход`.
 Для перезапуска диалога введите `начало`.
 
-## Структура проекта
+## Структура проекта (обновляется)
 
 ```
 MaymunAI/
-├── main.py                 # Точка входа в приложение
-├── config.py               # Конфигурация системы
-├── db.py                   # Работа с базой данных PostgreSQL
-├── embeddings.py           # Создание и управление эмбеддингами
-├── retrieval.py            # Поиск релевантных документов
-├── rag.py                  # Генерация ответов на основе RAG
-├── keywords.py             # Генерация ключевых слов
-├── process_query.py        # Обработка пользовательских запросов
-├── debug_utils.py          # Инструменты для отладки
-├── db_analyzer.py          # Анализ базы данных
-├── migration.py            # Миграция схемы базы данных
-├── preload_embeddings.py   # Предзагрузка эмбеддингов
-├── standalone_search.py    # Автономный поиск
-├── utils.py                # Вспомогательные функции
-├── settings.example.py     # Пример файла настроек
-├── requirements.txt        # Зависимости Python
-├── memory-bank/            # Документация и контекст проекта
-│   ├── productContext.md
-│   ├── improvementPlan.md
-│   └── ...
-└── .roo/                   # Конфигурация Roo
+├── main.py                 # Точка входа (совместимость CLI)
+├── config.yaml             # Новый конфиг режимов/ретриверов
+├── core/                   # settings/logging/prompts/mcp_server
+├── db/                     # pg_native/pg_mcp_client/schema_introspect
+├── rag/                    # embed/index/retriever/compose_context
+├── modes/                  # runner_client/runner_mcp_server
+├── cli/                    # ingest_docs/build_index/test_query
+├── prompts/                # system/modes
+├── docker/                 # fastgpt-compose.yml/ragflow-compose.yml
+└── legacy файлы проекта
 ```
 
 ## Зависимости
@@ -215,6 +223,13 @@ MaymunAI/
 - Детальный анализ производительности системы
 - Выявление узких мест и возможностей оптимизации
 - Разработка плана улучшений
+
+## План тестирования и валидации
+
+- Регрессия CLI: запуск [main.py](main.py:1) с ключевыми флагами, проверка интерактивного режима.
+- Валидация RAG: сверка качества ответов (precision@k/recall/NDCG) на наборе контрольных запросов.
+- Проверка внешних ретриверов: smoke-тесты FastGPT/RAGFlow и корректность формата цитат.
+- Миграция данных: тест на восстановление из дампа, проверка схемы через `schema_introspect`.
 
 ## План развития
 
@@ -262,6 +277,12 @@ python main.py --debug_extended
 ```bash
 pytest
 ```
+
+## Безопасность MCP (минимум для MVP)
+
+- Не хранить токены MCP/внешних сервисов в коде, только через `.env`.
+- Принцип минимальных привилегий для БД и MCP tools.
+- Логировать вызовы MCP tools без утечки секретов.
 
 ## Лицензия
 

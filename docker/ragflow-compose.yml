@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  ragflow:
+    image: infiniflow/ragflow:latest
+    container_name: ragflow
+    ports:
+      - "9380:9380"
+    environment:
+      - TZ=UTC
+    volumes:
+      - ragflow-data:/ragflow/data
+
+volumes:
+  ragflow-data:

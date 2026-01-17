@@ -1,0 +1,48 @@
+mode:
+  db_access: native_pg
+  retriever: RAG_NATIVE
+  run_as: client_app
+
+postgres:
+  host: localhost
+  port: 5432
+  dbname: neurokod
+  user: postgres
+  password: ${PG_PASSWORD}
+  schema: public
+  use_pgvector: true
+
+mcp:
+  pg_server:
+    command: "enhanced-postgres-mcp-server"
+    transport: "stdio"
+    args:
+      - "--dsn=${PG_DSN}"
+
+fastgpt:
+  base_url: "http://localhost:3000"
+  api_key: "${FASTGPT_API_KEY}"
+  dataset_id: "${FASTGPT_DATASET_ID}"
+
+ragflow:
+  base_url: "http://localhost:9380"
+  api_key: "${RAGFLOW_API_KEY}"
+  index: "default"
+
+prompts:
+  pack: "default"
+  preload_paths:
+    - "./prompts/system"
+    - "./prompts/modes"
+
+logging:
+  level: INFO
+  fmt: json
+  file: "./logs/maymunai.log"
+  module_levels:
+    db: INFO
+    rag: DEBUG
+    mcp: DEBUG
+    retrievers.fastgpt: DEBUG
+    retrievers.ragflow: DEBUG
+  trace_id: true
