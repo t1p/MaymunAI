@@ -36,6 +36,17 @@ ENV/
 # Logs
 *.log
 
+# Database dumps / backups
+*.dump
+*.backup
+*.bak
+*.sql
+*.sql.gz
+*.sql.zip
+
+# Keep documented example env file tracked
+!.env.example
+
 # Local development
 .DS_Store
 settings.py

@@ -40,8 +40,8 @@
 * **Каталог Windows**: C:\Windows
 * **Системный каталог**: C:\Windows\system32
 * **Установленные программы**: Python 3.11.9, PostgreSQL 17.4
-* **Параметры БД**: DB name: maymunai, User: maymun, Host: localhost, Port: 5432
-* **Сетевые параметры**: Адаптер 1: Qualcomm Atheros QCA61x4A (IP: 192.168.11.234, DHCP: 192.168.11.1), Адаптер 2: Bluetooth (отключен)
+* **Параметры БД**: DB name: maymunai, User: maymun, Host: <PRIVATE_HOST>, Port: 5432
+* **Сетевые параметры**: Адаптер 1: Qualcomm Atheros QCA61x4A (IP: <PRIVATE_NET>, DHCP: <PRIVATE_NET>), Адаптер 2: Bluetooth (отключен)
 * **Безопасность**: Исправления: KB5049622, KB5053598, KB5052915; Виртуализация: активна; Безопасная загрузка: включена; Защита DMA: активна
 
 ## Открытые вопросы/проблемы
