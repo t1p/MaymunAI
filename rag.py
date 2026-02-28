@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from openai import OpenAI
 from config import OPENAI_API_KEY, RAG_SETTINGS, MODELS
 from retrieval import rerank_items as search_similar_items
@@ -8,8 +8,17 @@ import tiktoken
 from debug_utils import debug_step
 from openai_api_models import client
 from utils import timeit
+from packs.loader import (
+    get_guardrails_for_pack,
+    get_pack_model_preset,
+    get_system_prompt_for_pack,
+    resolve_pack_for_context,
+)
+from audit_log import log_audit_event
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_SYSTEM_PROMPT = "Ты помощник, который отвечает на вопросы, используя предоставленный контекст."
 
 def num_tokens_from_string(string: str, model: str = None) -> int:
     """Возвращает количество токенов в строке"""
@@ -87,7 +96,11 @@ def generate_prompt(query: str, context_items: List[Dict[str, Any]]) -> str:
     return prompt
 
 @timeit
-def generate_answer(query: str, context_items: List[Dict[str, Any]]) -> str:
+def generate_answer(
+    query: str,
+    context_items: List[Dict[str, Any]],
+    runtime_context: Optional[Dict[str, Any]] = None,
+) -> str:
     """Генерирует ответ на основе контекста"""
     logger.debug("Генерация ответа")
     
@@ -104,9 +117,45 @@ def generate_answer(query: str, context_items: List[Dict[str, Any]]) -> str:
         return "Извините, в базе знаний не найдено информации по вашему запросу. Пожалуйста, уточните вопрос или используйте другие ключевые слова."
     
     prompt = generate_prompt(query, context_items)
+
+    runtime_context = runtime_context or {}
+    selected_pack = None
+    system_prompt = DEFAULT_SYSTEM_PROMPT
+    model_name = MODELS['generation']['name']
+    pack_guardrails: Dict[str, Any] = {}
+
+    try:
+        selected_pack = resolve_pack_for_context(runtime_context)
+        system_prompt = get_system_prompt_for_pack(selected_pack)
+        preset = get_pack_model_preset(selected_pack)
+        generation_preset = preset.get('generation', {}) if isinstance(preset, dict) else {}
+        model_name = generation_preset.get('model', model_name)
+        pack_guardrails = get_guardrails_for_pack(selected_pack)
+
+        try:
+            log_audit_event(
+                event_type='pack_selected',
+                actor='system',
+                pack_id=selected_pack,
+                details={
+                    'chat_id': runtime_context.get('chat_id'),
+                    'group': runtime_context.get('group'),
+                    'topic': runtime_context.get('topic'),
+                },
+            )
+        except Exception:
+            logger.debug('Не удалось записать audit event pack_selected', exc_info=True)
+    except Exception as pack_error:
+        logger.warning(f"Pack runtime fallback to defaults: {pack_error}")
     
     # Получаем параметры генерации (возможно, обновленные пользователем)
     gen_params = debug_step('generation') or RAG_SETTINGS
+
+    if selected_pack:
+        output_limits = pack_guardrails.get('output_limits', {}) if isinstance(pack_guardrails, dict) else {}
+        pack_max_tokens = output_limits.get('max_message_length')
+        if isinstance(pack_max_tokens, int) and pack_max_tokens > 0:
+            gen_params = {**gen_params, 'max_tokens': min(gen_params['max_tokens'], pack_max_tokens)}
     
     total_tokens = num_tokens_from_string(prompt)
     logger.debug(f"Общее количество токенов в промпте: {total_tokens}")
@@ -119,10 +168,24 @@ def generate_answer(query: str, context_items: List[Dict[str, Any]]) -> str:
         logger.debug("Промпт обрезан до безопасного размера")
     
     try:
+        try:
+            log_audit_event(
+                event_type='response_generation_started',
+                actor='system',
+                pack_id=selected_pack,
+                details={
+                    'model': model_name,
+                    'query_len': len(query),
+                    'context_items': len(context_items),
+                },
+            )
+        except Exception:
+            logger.debug('Не удалось записать audit event response_generation_started', exc_info=True)
+
         response = client.chat.completions.create(
-            model=MODELS['generation']['name'],
+            model=model_name,
             messages=[
-                {"role": "system", "content": "Ты помощник, который отвечает на вопросы, используя предоставленный контекст."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
             temperature=gen_params['temperature'],
@@ -134,10 +197,24 @@ def generate_answer(query: str, context_items: List[Dict[str, Any]]) -> str:
         
         # Оставить только этот один вызов в конце
         debug_step('generation', {
-            'model': MODELS['generation']['name'],
+            'model': model_name,
+            'pack': selected_pack,
             'answer_tokens': num_tokens_from_string(answer),
             'answer': answer
         })
+
+        try:
+            log_audit_event(
+                event_type='response_generated',
+                actor='system',
+                pack_id=selected_pack,
+                details={
+                    'model': model_name,
+                    'answer_len': len(answer),
+                },
+            )
+        except Exception:
+            logger.debug('Не удалось записать audit event response_generated', exc_info=True)
         
         return answer
     except Exception as e:

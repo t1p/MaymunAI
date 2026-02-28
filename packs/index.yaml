@@ -1,0 +1,26 @@
+version: "1.0.0"
+default_pack: "mabiz"
+packs:
+  - name: "mabiz"
+    path: "mabiz"
+    version: "1.0.0"
+  - name: "mtla"
+    path: "mtla"
+    version: "1.0.0"
+  - name: "gelyrix"
+    path: "gelyrix"
+    version: "1.0.0"
+routing:
+  by_chat_id:
+    "1001": "mabiz"
+    "1002": "mtla"
+    "1003": "gelyrix"
+  by_group:
+    "MABIZ General": "mabiz"
+    "MTLA General": "mtla"
+    "GELYRIX General": "gelyrix"
+  by_topic:
+    "mabiz-topic": "mabiz"
+    "mtla-topic": "mtla"
+    "gelyrix-topic": "gelyrix"
+

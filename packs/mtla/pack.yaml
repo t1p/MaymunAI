@@ -1,0 +1,14 @@
+name: "mtla"
+version: "1.0.0"
+schema_version: "1.0.0"
+description: "Production pack for MTLA project"
+author: "UNKNOWN"
+created: "2026-02-28"
+updated: "2026-02-28"
+dependencies: []
+tags:
+  - "production"
+  - "mtla"
+compatibility:
+  maymunai_core: ">=1.0.0"
+

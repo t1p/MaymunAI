@@ -1,0 +1,8 @@
+version: "1.0.0"
+forbidden_topics:
+  - "illegal_activities"
+  - "financial_advice_without_disclaimer"
+output_limits:
+  max_message_length: 5000
+  max_code_blocks: 10
+

@@ -35,6 +35,16 @@ ENV/
 
 # Logs
 *.log
+logs/
+runtime/
+
+# Runtime state / pid / temp
+*.pid
+*.pid.lock
+*.state
+*.tmp
+tmp/
+temp/
 
 # Database dumps / backups
 *.dump
@@ -43,9 +53,14 @@ ENV/
 *.sql
 *.sql.gz
 *.sql.zip
+*.tar
+*.tar.gz
+*.tgz
+*.zip
 
 # Keep documented example env file tracked
 !.env.example
+!.secrets.baseline
 
 # Local development
 .DS_Store

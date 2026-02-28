@@ -1,13 +1,32 @@
 from typing import List, Dict, Any
 import argparse
 import logging
+import os
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from db import get_items_sample, view_item_tree, view_root_items, search_text, print_search_results, get_block_info_by_name, get_block_info_by_id, print_block_info, ensure_text_search_index, search_by_keywords
 from retrieval import rerank_items as search_similar_items
 from rag import generate_answer
 from config import DEBUG, SEARCH_SETTINGS, RAG_SETTINGS
 from debug_utils import confirm_action, debug_step
 from keywords import generate_keywords_for_query
+from audit_log import log_audit_event
+from retention import run_housekeeping
 import db_analyzer
+
+
+logger = logging.getLogger(__name__)
+
+
+def _get_env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else default
+    except (TypeError, ValueError):
+        return default
 
 def convert_item_format(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Преобразует формат элементов из БД в формат, ожидаемый retrieval.py"""
@@ -29,12 +48,42 @@ def convert_item_format(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def setup_logging(debug: bool):
     """Настройка логгирования"""
     level = logging.DEBUG if debug else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    log_dir = Path(os.getenv('MAYMUNAI_LOG_DIR', './runtime/logs'))
+    log_dir.mkdir(parents=True, exist_ok=True)
 
-def process_query(query: str, sample_size: int = None, top_k: int = None, root_id: str = None) -> str:
+    max_bytes = _get_env_int('MAYMUNAI_LOG_MAX_BYTES', 10 * 1024 * 1024)
+    backups = _get_env_int('MAYMUNAI_LOG_BACKUPS', 5)
+
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    console_handler.setFormatter(formatter)
+
+    file_handler = RotatingFileHandler(
+        filename=log_dir / 'maymunai.log',
+        maxBytes=max_bytes,
+        backupCount=backups,
+        encoding='utf-8',
+    )
+    file_handler.setLevel(level)
+    file_handler.setFormatter(formatter)
+
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
+
+def process_query(
+    query: str,
+    sample_size: int = None,
+    top_k: int = None,
+    root_id: str = None,
+    runtime_context: Dict[str, Any] = None,
+) -> str:
     """
     Обрабатывает пользовательский запрос
     """
@@ -75,12 +124,20 @@ def process_query(query: str, sample_size: int = None, top_k: int = None, root_i
     
     # Генерируем ответ
     logger.debug("Генерируем ответ")
-    answer = generate_answer(query, relevant_items)
+    answer = generate_answer(query, relevant_items, runtime_context=runtime_context)
     logger.debug("Ответ получен")
     
     return answer
 
-def process_query_with_keywords(query: str, keywords: List[str], top_k: int = None, root_id: str = None, parent_context: int = 0, child_context: int = 0) -> str:
+def process_query_with_keywords(
+    query: str,
+    keywords: List[str],
+    top_k: int = None,
+    root_id: str = None,
+    parent_context: int = 0,
+    child_context: int = 0,
+    runtime_context: Dict[str, Any] = None,
+) -> str:
     """
     Обрабатывает пользовательский запрос с использованием ключевых слов для поиска контекста
     """
@@ -158,7 +215,7 @@ def process_query_with_keywords(query: str, keywords: List[str], top_k: int = No
     
     # Генерируем ответ
     logger.debug("Генерируем ответ")
-    answer = generate_answer(query, relevant_items)
+    answer = generate_answer(query, relevant_items, runtime_context=runtime_context)
     logger.debug("Ответ получен")
     
     return answer
@@ -239,6 +296,9 @@ def main():
                         help='Количество уровней дочернего контекста (0 - отключено)')
     parser.add_argument('--clear-invalid', action='store_true', 
                        help='Очистить эмбеддинги с неправильной размерностью')
+    parser.add_argument('--chat-id', help='Контекст маршрутизации pack: chat_id')
+    parser.add_argument('--group', dest='group_name', help='Контекст маршрутизации pack: group')
+    parser.add_argument('--topic', help='Контекст маршрутизации pack: topic')
     args = parser.parse_args()
     
     # Настройка логгирования и режима отладки
@@ -246,6 +306,23 @@ def main():
     DEBUG['enabled'] = args.debug or args.debug_extended
     DEBUG['extended'] = args.debug_extended  # Добавляем флаг расширенной отладки
     logger = logging.getLogger('main')
+
+    try:
+        housekeeping_report = run_housekeeping()
+        logger.info(f"Housekeeping completed: {housekeeping_report}")
+    except Exception as housekeeping_error:
+        logger.warning(f"Housekeeping failed: {housekeeping_error}")
+
+    log_audit_event(
+        event_type='service_started',
+        actor='system',
+        details={
+            'debug': bool(args.debug or args.debug_extended),
+            'chat_id': args.chat_id,
+            'group': args.group_name,
+            'topic': args.topic,
+        },
+    )
     
     # Создаем таблицы, если их нет
     try:
@@ -479,6 +556,11 @@ def main():
             try:
                 logger.debug(f"Обработка запроса: {query}")
                 logger.debug(f"Ключевые слова: {keywords}")
+                runtime_context = {
+                    'chat_id': args.chat_id,
+                    'group': args.group_name,
+                    'topic': args.topic,
+                }
                 
                 if keywords:
                     # Больше не нужно преобразовывать keywords в список, он уже список
@@ -487,7 +569,8 @@ def main():
                         keywords,  # Используем уже подготовленный список keywords
                         root_id=args.block_id,
                         parent_context=args.parent_context,
-                        child_context=args.child_context
+                        child_context=args.child_context,
+                        runtime_context=runtime_context,
                     )
                 else:
                     print("Не указаны ключевые слова. Используйте ключевые слова для поиска релевантного контекста.")

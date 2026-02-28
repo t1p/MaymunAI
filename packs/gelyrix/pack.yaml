@@ -1,0 +1,14 @@
+name: "gelyrix"
+version: "1.0.0"
+schema_version: "1.0.0"
+description: "Production pack for GELYRIX project"
+author: "UNKNOWN"
+created: "2026-02-28"
+updated: "2026-02-28"
+dependencies: []
+tags:
+  - "production"
+  - "gelyrix"
+compatibility:
+  maymunai_core: ">=1.0.0"
+

@@ -1,0 +1,14 @@
+version: "1.0.0"
+default_role: "MTLA-Orchestrator"
+mappings:
+  - group: "MTLA General"
+    role: "MTLA-KnowledgeOps"
+    priority: 1
+  - group: "MTLA General"
+    topic: "Engineering"
+    role: "MTLA-Engineer"
+    priority: 2
+fallback_chain:
+  - "MTLA-Orchestrator"
+  - "SafeMode"
+

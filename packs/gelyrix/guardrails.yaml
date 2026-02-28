@@ -1,0 +1,8 @@
+version: "1.0.0"
+forbidden_topics:
+  - "illegal_activities"
+  - "personal_data_exfiltration"
+output_limits:
+  max_message_length: 3500
+  max_code_blocks: 6
+

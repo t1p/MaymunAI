@@ -1,0 +1,14 @@
+version: "1.0.0"
+default_role: "GELYRIX-Orchestrator"
+mappings:
+  - group: "GELYRIX General"
+    role: "GELYRIX-KnowledgeOps"
+    priority: 1
+  - group: "GELYRIX General"
+    topic: "Operations"
+    role: "GELYRIX-Operator"
+    priority: 2
+fallback_chain:
+  - "GELYRIX-Orchestrator"
+  - "SafeMode"
+

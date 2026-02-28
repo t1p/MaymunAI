@@ -1,0 +1,9 @@
+version: "1.0.0"
+generation:
+  model: "gpt-4o-latest"
+  temperature: 0.2
+  max_tokens: 1600
+think:
+  enabled: true
+  depth: 2
+

@@ -1,0 +1,14 @@
+version: "1.0.0"
+default_role: "MABIZ-Orchestrator"
+mappings:
+  - group: "MABIZ General"
+    role: "MABIZ-KnowledgeOps"
+    priority: 1
+  - group: "MABIZ General"
+    topic: "Architecture"
+    role: "MABIZ-Architect"
+    priority: 2
+fallback_chain:
+  - "MABIZ-Orchestrator"
+  - "SafeMode"
+
